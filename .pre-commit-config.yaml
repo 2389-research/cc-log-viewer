@@ -1,0 +1,48 @@
+repos:
+    - repo: https://github.com/pre-commit/pre-commit-hooks
+      rev: v4.5.0
+      hooks:
+          - id: trailing-whitespace
+          - id: end-of-file-fixer
+          - id: check-yaml
+          - id: check-added-large-files
+          - id: check-merge-conflict
+
+    - repo: https://github.com/doublify/pre-commit-rust
+      rev: v1.0
+      hooks:
+          - id: fmt
+            name: "rust: format"
+            description: "Runs cargo fmt on Rust code"
+          - id: cargo-check
+            name: "rust: check"
+            description: "Runs cargo check on Rust code"
+          - id: clippy
+            name: "rust: clippy"
+            description: "Runs clippy on Rust code"
+
+    - repo: https://github.com/crate-ci/typos
+      rev: v1.16.23
+      hooks:
+          - id: typos
+            name: "check: typos"
+            description: "Checks for spelling mistakes"
+
+    - repo: https://github.com/charliermarsh/ruff-pre-commit
+      rev: v0.1.9
+      hooks:
+          - id: ruff
+            name: "python: ruff"
+            description: "Run ruff on Python files"
+            types: [python]
+            args: [--fix, --exit-non-zero-on-fix]
+
+    - repo: local
+      hooks:
+          - id: cargo-test
+            name: "rust: tests"
+            description: "Run Rust tests"
+            entry: cargo test
+            language: system
+            types: [rust]
+            pass_filenames: false
