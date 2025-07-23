@@ -1,0 +1,795 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Claude Code Log Viewer</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: #333;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 3rem;
+        }
+
+        h1 {
+            color: white;
+            font-size: 2.5rem;
+            margin-bottom: 0.5rem;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.3);
+        }
+
+        .subtitle {
+            color: rgba(255,255,255,0.9);
+            font-size: 1.1rem;
+        }
+
+        .card {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 8px 25px rgba(0,0,0,0.1);
+            margin-bottom: 2rem;
+            overflow: hidden;
+        }
+
+        .card-header {
+            background: linear-gradient(90deg, #4a90e2, #357abd);
+            color: white;
+            padding: 1rem 1.5rem;
+            font-weight: 600;
+            font-size: 1.1rem;
+        }
+
+        .card-body {
+            padding: 1.5rem;
+        }
+
+        .projects-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 1.5rem;
+        }
+
+        .project-card {
+            background: white;
+            border-radius: 8px;
+            border: 1px solid #e1e5e9;
+            padding: 1.5rem;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .project-card:hover {
+            border-color: #4a90e2;
+            box-shadow: 0 4px 12px rgba(74, 144, 226, 0.15);
+            transform: translateY(-2px);
+        }
+
+        .project-name {
+            font-weight: 600;
+            font-size: 1.1rem;
+            margin-bottom: 0.5rem;
+            color: #2c3e50;
+        }
+
+        .project-stats {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.9rem;
+            color: #7f8c8d;
+            margin-bottom: 0.5rem;
+        }
+
+        .project-activity {
+            font-size: 0.8rem;
+            color: #95a5a6;
+        }
+
+        .sessions-list {
+            display: none;
+        }
+
+        .sessions-list.active {
+            display: block;
+        }
+
+        .session-item {
+            border-bottom: 1px solid #eee;
+            padding: 1rem;
+            cursor: pointer;
+            transition: background-color 0.2s ease;
+        }
+
+        .session-item:hover {
+            background-color: #f8f9fa;
+        }
+
+        .session-item:last-child {
+            border-bottom: none;
+        }
+
+        .session-title {
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            color: #2c3e50;
+        }
+
+        .session-meta {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.85rem;
+            color: #7f8c8d;
+        }
+
+        .log-viewer {
+            display: none;
+        }
+
+        .log-viewer.active {
+            display: block;
+        }
+
+        .conversation-container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 0;
+        }
+
+        .message {
+            display: flex;
+            margin-bottom: 1.5rem;
+            gap: 12px;
+        }
+
+        .message.user {
+            flex-direction: row;
+        }
+
+        .message.assistant {
+            flex-direction: row-reverse;
+        }
+
+        .message.tool {
+            justify-content: center;
+            margin: 1rem 0;
+        }
+
+        .message.summary {
+            justify-content: center;
+            margin: 2rem 0;
+        }
+
+        .avatar {
+            width: 32px;
+            height: 32px;
+            border-radius: 6px;
+            flex-shrink: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            font-weight: 600;
+        }
+
+        .avatar.user {
+            background: #007bff;
+            color: white;
+        }
+
+        .avatar.assistant {
+            background: #28a745;
+            color: white;
+        }
+
+        .message-content {
+            flex: 1;
+            max-width: calc(100% - 44px);
+        }
+
+        .message.user .message-content {
+            background: #e8f4fd;
+            color: #333;
+            padding: 12px 16px;
+            border-radius: 8px;
+            border-left: 3px solid #007bff;
+        }
+
+        .message.assistant .message-content {
+            background: #f8f9fa;
+            color: #333;
+            padding: 12px 16px;
+            border-radius: 8px;
+            border-right: 3px solid #28a745;
+        }
+
+        .message-text {
+            line-height: 1.5;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            margin: 0;
+        }
+
+        .message-meta {
+            font-size: 0.75rem;
+            color: #888;
+            margin-top: 4px;
+            text-align: left;
+        }
+
+        .message.assistant .message-meta {
+            text-align: right;
+        }
+
+        .tool-call-container {
+            background: #fff3cd;
+            border: 1px solid #ffeaa7;
+            border-radius: 6px;
+            padding: 12px;
+            margin: 1rem auto;
+            max-width: 600px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.85rem;
+        }
+
+        .tool-call-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #856404;
+        }
+
+        .tool-call-content {
+            background: #ffffff;
+            border-radius: 4px;
+            padding: 8px;
+            border-left: 3px solid #ffc107;
+        }
+
+        .tool-result-container {
+            background: #d1ecf1;
+            border: 1px solid #bee5eb;
+            border-radius: 6px;
+            padding: 12px;
+            margin: 1rem auto;
+            max-width: 600px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.85rem;
+        }
+
+        .tool-result-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #0c5460;
+        }
+
+        .tool-result-content {
+            background: #ffffff;
+            border-radius: 4px;
+            padding: 8px;
+            border-left: 3px solid #17a2b8;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .session-summary {
+            background: linear-gradient(135deg, #ffd89b 0%, #19547b 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 16px;
+            text-align: center;
+            margin: 2rem auto;
+            max-width: 600px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+
+        .session-summary h3 {
+            margin: 0 0 8px 0;
+            font-size: 1.2rem;
+        }
+
+        .session-summary p {
+            margin: 0;
+            opacity: 0.9;
+        }
+
+        .back-btn {
+            background: #6c757d;
+            color: white;
+            border: none;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            margin-bottom: 1rem;
+            transition: background-color 0.2s ease;
+        }
+
+        .back-btn:hover {
+            background: #5a6268;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 2rem;
+            color: #7f8c8d;
+            font-style: italic;
+        }
+
+        .error {
+            background: #fee;
+            border: 1px solid #fcc;
+            color: #c33;
+            padding: 1rem;
+            border-radius: 6px;
+            margin: 1rem 0;
+        }
+
+        .timestamp {
+            font-family: 'Courier New', monospace;
+            font-size: 0.8rem;
+        }
+
+        .tool-call {
+            background: #f1f5f9;
+            border: 1px solid #cbd5e1;
+            border-radius: 4px;
+            padding: 0.75rem;
+            margin: 0.5rem 0;
+            font-family: 'Courier New', monospace;
+            font-size: 0.85rem;
+        }
+
+        .tool-result {
+            background: #f0f9ff;
+            border: 1px solid #bae6fd;
+            border-radius: 4px;
+            padding: 0.75rem;
+            margin: 0.5rem 0;
+            font-family: 'Courier New', monospace;
+            font-size: 0.85rem;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 1rem;
+            }
+            
+            h1 {
+                font-size: 2rem;
+            }
+            
+            .projects-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .project-stats {
+                flex-direction: column;
+                gap: 0.25rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🤖 Claude Code Log Viewer</h1>
+            <p class="subtitle">Explore and audit your Claude Code conversation logs</p>
+        </header>
+
+        <div id="projects-view" class="card">
+            <div class="card-header">
+                Projects
+            </div>
+            <div class="card-body">
+                <div id="projects-loading" class="loading">
+                    Loading projects...
+                </div>
+                <div id="projects-list" class="projects-grid"></div>
+            </div>
+        </div>
+
+        <div id="sessions-view" class="card sessions-list">
+            <div class="card-header">
+                <button class="back-btn" onclick="showProjects()">← Back to Projects</button>
+                <span id="project-title">Sessions</span>
+            </div>
+            <div class="card-body">
+                <div id="sessions-loading" class="loading">
+                    Loading sessions...
+                </div>
+                <div id="sessions-list"></div>
+            </div>
+        </div>
+
+        <div id="log-view" class="card log-viewer">
+            <div class="card-header">
+                <button class="back-btn" onclick="showSessions()">← Back to Sessions</button>
+                <span id="session-title">Conversation Log</span>
+            </div>
+            <div class="card-body">
+                <div id="log-loading" class="loading">
+                    Loading conversation...
+                </div>
+                <div id="log-entries" class="conversation-container"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentProject = null;
+        let currentSession = null;
+
+        // URL routing functions
+        function updateURL(view, project = null, session = null) {
+            let url = '/';
+            if (view === 'sessions' && project) {
+                url = `/project/${encodeURIComponent(project)}`;
+            } else if (view === 'conversation' && project && session) {
+                url = `/project/${encodeURIComponent(project)}/session/${encodeURIComponent(session)}`;
+            }
+            history.pushState({view, project, session}, '', url);
+        }
+
+        function parseURL() {
+            const path = window.location.pathname;
+            const matches = path.match(/^\/project\/([^\/]+)(?:\/session\/([^\/]+))?$/);
+            
+            if (matches) {
+                const project = decodeURIComponent(matches[1]);
+                const session = matches[2] ? decodeURIComponent(matches[2]) : null;
+                
+                if (session) {
+                    loadSession(project, session, false);
+                } else {
+                    loadSessions(project, false);
+                }
+            } else {
+                showProjects(false);
+            }
+        }
+
+        // Handle browser back/forward buttons
+        window.addEventListener('popstate', function(event) {
+            if (event.state) {
+                const {view, project, session} = event.state;
+                if (view === 'conversation' && project && session) {
+                    loadSession(project, session, false);
+                } else if (view === 'sessions' && project) {
+                    loadSessions(project, false);
+                } else {
+                    showProjects(false);
+                }
+            } else {
+                showProjects(false);
+            }
+        });
+
+        async function loadProjects() {
+            document.getElementById('projects-loading').style.display = 'block';
+            document.getElementById('projects-list').innerHTML = '';
+            
+            try {
+                const response = await fetch('/api/projects');
+                const projects = await response.json();
+                
+                const projectsList = document.getElementById('projects-list');
+                
+                if (projects.length === 0) {
+                    projectsList.innerHTML = '<p class="loading">No projects found</p>';
+                    return;
+                }
+                
+                projects.forEach(project => {
+                    const projectCard = document.createElement('div');
+                    projectCard.className = 'project-card';
+                    projectCard.onclick = () => loadSessions(project.name, true);
+                    
+                    const lastActivity = project.latest_activity ? 
+                        new Date(project.latest_activity).toLocaleDateString() : 
+                        'No activity';
+                    
+                    projectCard.innerHTML = `
+                        <div class="project-name">${project.name}</div>
+                        <div class="project-stats">
+                            <span>${project.session_count} sessions</span>
+                        </div>
+                        <div class="project-activity">Last activity: ${lastActivity}</div>
+                    `;
+                    
+                    projectsList.appendChild(projectCard);
+                });
+            } catch (error) {
+                document.getElementById('projects-list').innerHTML = 
+                    `<div class="error">Failed to load projects: ${error.message}</div>`;
+            } finally {
+                document.getElementById('projects-loading').style.display = 'none';
+            }
+        }
+
+        async function loadSessions(projectName, updateUrl = true) {
+            currentProject = projectName;
+            document.getElementById('project-title').textContent = `Sessions - ${projectName}`;
+            document.getElementById('projects-view').style.display = 'none';
+            document.getElementById('sessions-view').style.display = 'block';
+            document.getElementById('sessions-loading').style.display = 'block';
+            document.getElementById('sessions-list').innerHTML = '';
+            
+            if (updateUrl) {
+                updateURL('sessions', projectName);
+            }
+            
+            try {
+                const response = await fetch(`/api/projects/${encodeURIComponent(projectName)}/sessions`);
+                const sessions = await response.json();
+                
+                const sessionsList = document.getElementById('sessions-list');
+                
+                if (sessions.length === 0) {
+                    sessionsList.innerHTML = '<p class="loading">No sessions found</p>';
+                    return;
+                }
+                
+                sessions.forEach(session => {
+                    const sessionItem = document.createElement('div');
+                    sessionItem.className = 'session-item';
+                    sessionItem.onclick = () => loadSession(projectName, session.id, true);
+                    
+                    sessionItem.innerHTML = `
+                        <div class="session-title">${session.summary}</div>
+                        <div class="session-meta">
+                            <span class="timestamp">${new Date(session.timestamp).toLocaleString()}</span>
+                            <span>${session.message_count} entries</span>
+                        </div>
+                    `;
+                    
+                    sessionsList.appendChild(sessionItem);
+                });
+            } catch (error) {
+                document.getElementById('sessions-list').innerHTML = 
+                    `<div class="error">Failed to load sessions: ${error.message}</div>`;
+            } finally {
+                document.getElementById('sessions-loading').style.display = 'none';
+            }
+        }
+
+        async function loadSession(projectName, sessionId, updateUrl = true) {
+            currentSession = sessionId;
+            document.getElementById('session-title').textContent = `Conversation - ${sessionId}`;
+            document.getElementById('sessions-view').style.display = 'none';
+            document.getElementById('log-view').style.display = 'block';
+            document.getElementById('log-loading').style.display = 'block';
+            document.getElementById('log-entries').innerHTML = '';
+            
+            if (updateUrl) {
+                updateURL('conversation', projectName, sessionId);
+            }
+            
+            try {
+                const response = await fetch(`/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionId)}`);
+                const entries = await response.json();
+                
+                const logEntries = document.getElementById('log-entries');
+                
+                if (entries.length === 0) {
+                    logEntries.innerHTML = '<p class="loading">No log entries found</p>';
+                    return;
+                }
+                
+                entries.forEach(entry => {
+                    if (entry.type === 'summary') {
+                        const summaryDiv = document.createElement('div');
+                        summaryDiv.className = 'session-summary';
+                        summaryDiv.innerHTML = `
+                            <h3>📋 Session Summary</h3>
+                            <p>${entry.summary || 'No summary available'}</p>
+                        `;
+                        logEntries.appendChild(summaryDiv);
+                    } else if (entry.type === 'user') {
+                        const messageDiv = document.createElement('div');
+                        messageDiv.className = 'message user';
+                        
+                        let content = '';
+                        if (entry.message && entry.message.content) {
+                            if (typeof entry.message.content === 'string') {
+                                content = entry.message.content.replace(/\\n/g, '\n');
+                            } else if (Array.isArray(entry.message.content)) {
+                                content = entry.message.content.map(c => {
+                                    if (typeof c === 'string') return c.replace(/\\n/g, '\n');
+                                    if (c.type === 'text') return c.text.replace(/\\n/g, '\n');
+                                    if (c.type === 'tool_result') return `Tool Result:\n${JSON.stringify(c.content, null, 2)}`;
+                                    return JSON.stringify(c, null, 2);
+                                }).join('\n');
+                            }
+                        }
+                        
+                        const avatar = document.createElement('div');
+                        avatar.className = 'avatar user';
+                        avatar.textContent = 'U';
+                        
+                        const messageContent = document.createElement('div');
+                        messageContent.className = 'message-content';
+                        
+                        const messageText = document.createElement('div');
+                        messageText.className = 'message-text';
+                        messageText.textContent = content;
+                        
+                        const messageMeta = document.createElement('div');
+                        messageMeta.className = 'message-meta';
+                        messageMeta.textContent = entry.timestamp ? new Date(entry.timestamp).toLocaleString() : '';
+                        
+                        messageContent.appendChild(messageText);
+                        messageContent.appendChild(messageMeta);
+                        messageDiv.appendChild(avatar);
+                        messageDiv.appendChild(messageContent);
+                        
+                        logEntries.appendChild(messageDiv);
+                        
+                        // Handle tool results for user messages
+                        if (entry.tool_use_result) {
+                            const toolResult = Array.isArray(entry.tool_use_result) ? 
+                                entry.tool_use_result.map(r => (r.text || JSON.stringify(r, null, 2)).replace(/\\n/g, '\n')).join('\n') :
+                                (entry.tool_use_result.text || JSON.stringify(entry.tool_use_result, null, 2)).replace(/\\n/g, '\n');
+                            
+                            const toolResultDiv = document.createElement('div');
+                            toolResultDiv.className = 'tool-result-container';
+                            
+                            const header = document.createElement('div');
+                            header.className = 'tool-result-header';
+                            header.innerHTML = '<span>📋</span><span>Tool Result</span>';
+                            
+                            const content = document.createElement('div');
+                            content.className = 'tool-result-content';
+                            content.textContent = toolResult;
+                            
+                            toolResultDiv.appendChild(header);
+                            toolResultDiv.appendChild(content);
+                            logEntries.appendChild(toolResultDiv);
+                        }
+                        
+                    } else if (entry.type === 'assistant') {
+                        const messageDiv = document.createElement('div');
+                        messageDiv.className = 'message assistant';
+                        
+                        let content = '';
+                        let toolCalls = [];
+                        
+                        if (entry.message && entry.message.content) {
+                            if (Array.isArray(entry.message.content)) {
+                                entry.message.content.forEach(c => {
+                                    if (c.type === 'text') {
+                                        content += c.text.replace(/\\n/g, '\n');
+                                    } else if (c.type === 'tool_use') {
+                                        toolCalls.push(c);
+                                    }
+                                });
+                            } else if (typeof entry.message.content === 'string') {
+                                content = entry.message.content.replace(/\\n/g, '\n');
+                            }
+                        }
+                        
+                        // Add the assistant message
+                        if (content.trim()) {
+                            const avatar = document.createElement('div');
+                            avatar.className = 'avatar assistant';
+                            avatar.textContent = 'AI';
+                            
+                            const messageContent = document.createElement('div');
+                            messageContent.className = 'message-content';
+                            
+                            const messageText = document.createElement('div');
+                            messageText.className = 'message-text';
+                            messageText.textContent = content;
+                            
+                            const messageMeta = document.createElement('div');
+                            messageMeta.className = 'message-meta';
+                            messageMeta.textContent = entry.timestamp ? new Date(entry.timestamp).toLocaleString() : '';
+                            
+                            messageContent.appendChild(messageText);
+                            messageContent.appendChild(messageMeta);
+                            messageDiv.appendChild(avatar);
+                            messageDiv.appendChild(messageContent);
+                            
+                            logEntries.appendChild(messageDiv);
+                        }
+                        
+                        // Add tool calls as separate items
+                        toolCalls.forEach(toolCall => {
+                            const toolDiv = document.createElement('div');
+                            toolDiv.className = 'tool-call-container';
+                            
+                            const header = document.createElement('div');
+                            header.className = 'tool-call-header';
+                            header.innerHTML = `<span>🔧</span><span>Tool: ${toolCall.name}</span>`;
+                            
+                            const content = document.createElement('div');
+                            content.className = 'tool-call-content';
+                            content.textContent = JSON.stringify(toolCall.input, null, 2);
+                            
+                            toolDiv.appendChild(header);
+                            toolDiv.appendChild(content);
+                            logEntries.appendChild(toolDiv);
+                        });
+                        
+                        // Handle tool results for assistant messages
+                        if (entry.tool_use_result) {
+                            const toolResult = Array.isArray(entry.tool_use_result) ? 
+                                entry.tool_use_result.map(r => (r.text || JSON.stringify(r, null, 2)).replace(/\\n/g, '\n')).join('\n') :
+                                (entry.tool_use_result.text || JSON.stringify(entry.tool_use_result, null, 2)).replace(/\\n/g, '\n');
+                            
+                            const toolResultDiv = document.createElement('div');
+                            toolResultDiv.className = 'tool-result-container';
+                            
+                            const header = document.createElement('div');
+                            header.className = 'tool-result-header';
+                            header.innerHTML = '<span>📋</span><span>Tool Result</span>';
+                            
+                            const content = document.createElement('div');
+                            content.className = 'tool-result-content';
+                            content.textContent = toolResult;
+                            
+                            toolResultDiv.appendChild(header);
+                            toolResultDiv.appendChild(content);
+                            logEntries.appendChild(toolResultDiv);
+                        }
+                    }
+                });
+            } catch (error) {
+                document.getElementById('log-entries').innerHTML = 
+                    `<div class="error">Failed to load session logs: ${error.message}</div>`;
+            } finally {
+                document.getElementById('log-loading').style.display = 'none';
+            }
+        }
+
+        function showProjects(updateUrl = true) {
+            document.getElementById('sessions-view').style.display = 'none';
+            document.getElementById('log-view').style.display = 'none';
+            document.getElementById('projects-view').style.display = 'block';
+            currentProject = null;
+            currentSession = null;
+            
+            if (updateUrl) {
+                updateURL('projects');
+            }
+        }
+
+        function showSessions(updateUrl = true) {
+            document.getElementById('log-view').style.display = 'none';
+            document.getElementById('sessions-view').style.display = 'block';
+            currentSession = null;
+            
+            if (updateUrl && currentProject) {
+                updateURL('sessions', currentProject);
+            }
+        }
+
+        // Initialize on page load
+        loadProjects().then(() => {
+            // Parse URL and show appropriate view
+            parseURL();
+        });
+    </script>
+</body>
+</html>
