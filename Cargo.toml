@@ -1,6 +1,6 @@
 [package]
 name = "cc-log-viewer"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 authors = ["Harper <harper@2389.ai>"]
 description = "A beautiful, feature-rich web interface for viewing and auditing Claude Code conversation logs"
