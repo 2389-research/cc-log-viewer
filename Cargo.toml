@@ -24,3 +24,21 @@ clap = { version = "4.0", features = ["derive"] }
 chrono = { version = "0.4", features = ["serde"] }
 walkdir = "2.0"
 uuid = { version = "1.0", features = ["serde"] }
+
+[dev-dependencies]
+tokio-test = "0.4"
+axum-test = "15.0"
+tempfile = "3.0"
+serde_json = "1.0"
+pretty_assertions = "1.0"
+criterion = { version = "0.5", features = ["html_reports"] }
+fake = { version = "2.0", features = ["derive", "chrono"] }
+proptest = "1.0"
+
+[[bench]]
+name = "log_parsing"
+harness = false
+
+[[bench]]
+name = "api_performance"
+harness = false
