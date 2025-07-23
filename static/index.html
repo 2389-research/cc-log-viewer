@@ -371,6 +371,64 @@
             font-size: 0.85rem;
         }
 
+        @keyframes pulse {
+            0% {
+                transform: scale(1);
+                opacity: 1;
+            }
+            50% {
+                transform: scale(1.2);
+                opacity: 0.7;
+            }
+            100% {
+                transform: scale(1);
+                opacity: 1;
+            }
+        }
+
+        .watch-btn {
+            background: #28a745;
+            color: white;
+            border: none;
+            padding: 0.75rem 1.5rem;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            font-weight: 600;
+            transition: all 0.2s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-left: 1rem;
+        }
+
+        .watch-btn:hover {
+            background: #218838;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 8px rgba(40, 167, 69, 0.3);
+        }
+
+        .watch-btn:active {
+            transform: translateY(0);
+        }
+
+        .activity-badge {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            width: 12px;
+            height: 12px;
+            background: #28a745;
+            border-radius: 50%;
+            animation: pulse 1.5s infinite;
+            z-index: 10;
+        }
+
+        .nav-link:hover {
+            background: rgba(255,255,255,0.3) !important;
+            transform: translateY(-1px);
+        }
+
         @media (max-width: 768px) {
             .container {
                 padding: 1rem;
@@ -388,6 +446,11 @@
                 flex-direction: column;
                 gap: 0.25rem;
             }
+
+            .watch-btn {
+                margin-left: 0;
+                margin-top: 0.5rem;
+            }
         }
     </style>
 </head>
@@ -396,6 +459,11 @@
         <header>
             <h1>🤖 Claude Code Log Viewer</h1>
             <p class="subtitle">Explore and audit your Claude Code conversation logs</p>
+
+            <div class="nav-links" style="display: flex; justify-content: center; gap: 1rem; margin-top: 1rem;">
+                <a href="/" class="nav-link active" style="background: rgba(255,255,255,0.4); color: white; text-decoration: none; padding: 0.5rem 1rem; border-radius: 6px; font-weight: 600;">🏠 Projects</a>
+                <a href="/live" class="nav-link" style="background: rgba(255,255,255,0.2); color: white; text-decoration: none; padding: 0.5rem 1rem; border-radius: 6px; transition: all 0.2s ease; border: 1px solid rgba(255,255,255,0.3);">📡 Live Activity</a>
+            </div>
         </header>
 
         <div id="projects-view" class="card">
@@ -1649,6 +1717,428 @@
         // Get appropriate handler for a tool
         function getToolHandler(toolName) {
             return toolHandlers[toolName] || new ToolHandler(toolName);
+        }
+
+        // WebSocket Watch Manager for real-time updates
+        class WatchManager {
+            constructor() {
+                this.ws = null;
+                this.subscribedProjects = new Set();
+                this.subscribedSessions = new Set();
+                this.activityIndicators = new Map();
+                this.reconnectAttempts = 0;
+                this.maxReconnectAttempts = 5;
+                this.reconnectDelay = 1000;
+                this.isWatching = false;
+            }
+
+            connect() {
+                if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                    return;
+                }
+
+                const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                const wsUrl = `${protocol}//${window.location.host}/ws/watch`;
+
+                try {
+                    this.ws = new WebSocket(wsUrl);
+
+                    this.ws.onopen = () => {
+                        console.log('WebSocket connected');
+                        this.reconnectAttempts = 0;
+                        this.isWatching = true;
+                        this.updateWatchStatus('connected');
+                    };
+
+                    this.ws.onmessage = (event) => {
+                        try {
+                            const watchEvent = JSON.parse(event.data);
+                            this.handleWatchEvent(watchEvent);
+                        } catch (e) {
+                            console.error('Failed to parse watch event:', e);
+                        }
+                    };
+
+                    this.ws.onclose = () => {
+                        console.log('WebSocket disconnected');
+                        this.isWatching = false;
+                        this.updateWatchStatus('disconnected');
+                        this.scheduleReconnect();
+                    };
+
+                    this.ws.onerror = (error) => {
+                        console.error('WebSocket error:', error);
+                        this.updateWatchStatus('error');
+                    };
+                } catch (e) {
+                    console.error('Failed to create WebSocket connection:', e);
+                    this.scheduleReconnect();
+                }
+            }
+
+            disconnect() {
+                this.isWatching = false;
+                if (this.ws) {
+                    this.ws.close();
+                    this.ws = null;
+                }
+                this.updateWatchStatus('disconnected');
+            }
+
+            scheduleReconnect() {
+                if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+                    console.error('Max reconnection attempts reached');
+                    this.updateWatchStatus('failed');
+                    return;
+                }
+
+                this.reconnectAttempts++;
+                const delay = this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1);
+
+                setTimeout(() => {
+                    if (!this.isWatching) {
+                        console.log(`Attempting to reconnect (${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
+                        this.connect();
+                    }
+                }, delay);
+            }
+
+            handleWatchEvent(watchEvent) {
+                console.log('Received watch event:', watchEvent);
+
+                switch (watchEvent.type) {
+                    case 'log_entry':
+                        this.handleNewLogEntry(watchEvent);
+                        break;
+                    case 'session_created':
+                        this.handleSessionCreated(watchEvent);
+                        break;
+                    case 'project_activity':
+                        this.handleProjectActivity(watchEvent);
+                        break;
+                    default:
+                        console.log('Unknown watch event type:', watchEvent.type);
+                }
+            }
+
+            handleNewLogEntry(watchEvent) {
+                // Only handle if we're currently viewing this session
+                if (currentProject === watchEvent.project && currentSession === watchEvent.session) {
+                    this.appendLogEntry(watchEvent.entry);
+                }
+
+                // Show activity indicator
+                this.showActivityIndicator(watchEvent.project, watchEvent.session);
+            }
+
+            handleSessionCreated(watchEvent) {
+                // If we're viewing the project's sessions, refresh the list
+                if (currentProject === watchEvent.project && !currentSession) {
+                    // Add a small delay to ensure the file is fully written
+                    setTimeout(() => {
+                        loadSessions(currentProject, false);
+                    }, 500);
+                }
+            }
+
+            handleProjectActivity(watchEvent) {
+                this.showActivityIndicator(watchEvent.project, null);
+            }
+
+            appendLogEntry(entry) {
+                if (!entry) return;
+
+                const logEntries = document.getElementById('log-entries');
+                if (!logEntries) return;
+
+                // Create a new message element
+                const messageDiv = document.createElement('div');
+                messageDiv.className = 'message assistant';
+                messageDiv.style.opacity = '0';
+                messageDiv.style.transition = 'opacity 0.3s ease';
+
+                // Determine the content based on entry type
+                let content = '';
+                if (entry.type === 'assistant' && entry.message && entry.message.content) {
+                    if (Array.isArray(entry.message.content)) {
+                        entry.message.content.forEach(c => {
+                            if (c.type === 'text') {
+                                content += c.text;
+                            }
+                        });
+                    } else if (typeof entry.message.content === 'string') {
+                        content = entry.message.content;
+                    }
+                } else if (entry.type === 'user' && entry.message && entry.message.content) {
+                    messageDiv.className = 'message user';
+                    if (typeof entry.message.content === 'string') {
+                        content = entry.message.content;
+                    } else if (Array.isArray(entry.message.content)) {
+                        content = entry.message.content
+                            .filter(c => c.type === 'text')
+                            .map(c => c.text)
+                            .join('\n');
+                    }
+                }
+
+                if (content.trim()) {
+                    const avatar = document.createElement('div');
+                    avatar.className = entry.type === 'user' ? 'avatar user' : 'avatar assistant';
+                    avatar.textContent = entry.type === 'user' ? 'U' : 'AI';
+
+                    const messageContent = document.createElement('div');
+                    messageContent.className = 'message-content';
+
+                    const messageText = document.createElement('div');
+                    messageText.className = 'message-text';
+                    messageText.textContent = content;
+
+                    const messageMeta = document.createElement('div');
+                    messageMeta.className = 'message-meta';
+                    messageMeta.textContent = entry.timestamp ? new Date(entry.timestamp).toLocaleString() : '';
+
+                    messageContent.appendChild(messageText);
+                    messageContent.appendChild(messageMeta);
+                    messageDiv.appendChild(avatar);
+                    messageDiv.appendChild(messageContent);
+
+                    // Add highlight border for new entries
+                    messageDiv.style.borderLeft = '4px solid #28a745';
+                    messageDiv.style.paddingLeft = '1rem';
+
+                    logEntries.appendChild(messageDiv);
+
+                    // Animate the entry in
+                    setTimeout(() => {
+                        messageDiv.style.opacity = '1';
+                    }, 10);
+
+                    // Remove highlight after a few seconds
+                    setTimeout(() => {
+                        messageDiv.style.borderLeft = 'none';
+                        messageDiv.style.paddingLeft = '0';
+                    }, 3000);
+
+                    // Auto-scroll to the new entry unless user has scrolled up
+                    this.autoScrollToBottom();
+                }
+            }
+
+            showActivityIndicator(project, session) {
+                // Create activity indicator for the project or session
+                const key = session ? `${project}:${session}` : project;
+
+                // Store activity timestamp
+                this.activityIndicators.set(key, Date.now());
+
+                // Add visual indicator if element exists
+                this.addActivityBadge(project, session);
+
+                // Remove indicator after a delay
+                setTimeout(() => {
+                    this.removeActivityBadge(project, session);
+                }, 5000);
+            }
+
+            addActivityBadge(project, session) {
+                // Find the relevant DOM element and add activity indicator
+                let targetElement = null;
+
+                if (session && currentProject === project) {
+                    // Find session item
+                    const sessionItems = document.querySelectorAll('.session-item');
+                    sessionItems.forEach(item => {
+                        if (item.textContent.includes(session)) {
+                            targetElement = item;
+                        }
+                    });
+                } else {
+                    // Find project card
+                    const projectCards = document.querySelectorAll('.project-card');
+                    projectCards.forEach(card => {
+                        if (card.textContent.includes(project)) {
+                            targetElement = card;
+                        }
+                    });
+                }
+
+                if (targetElement && !targetElement.querySelector('.activity-badge')) {
+                    const badge = document.createElement('div');
+                    badge.className = 'activity-badge';
+                    badge.style.cssText = `
+                        position: absolute;
+                        top: 10px;
+                        right: 10px;
+                        width: 12px;
+                        height: 12px;
+                        background: #28a745;
+                        border-radius: 50%;
+                        animation: pulse 1.5s infinite;
+                    `;
+
+                    targetElement.style.position = 'relative';
+                    targetElement.appendChild(badge);
+                }
+            }
+
+            removeActivityBadge(project, session) {
+                // Remove activity badge
+                let targetElement = null;
+
+                if (session && currentProject === project) {
+                    const sessionItems = document.querySelectorAll('.session-item');
+                    sessionItems.forEach(item => {
+                        if (item.textContent.includes(session)) {
+                            targetElement = item;
+                        }
+                    });
+                } else {
+                    const projectCards = document.querySelectorAll('.project-card');
+                    projectCards.forEach(card => {
+                        if (card.textContent.includes(project)) {
+                            targetElement = card;
+                        }
+                    });
+                }
+
+                if (targetElement) {
+                    const badge = targetElement.querySelector('.activity-badge');
+                    if (badge) {
+                        badge.remove();
+                    }
+                }
+            }
+
+            autoScrollToBottom() {
+                const logEntries = document.getElementById('log-entries');
+                if (!logEntries) return;
+
+                const container = logEntries.closest('.card-body');
+                if (!container) return;
+
+                // Check if user is near the bottom (within 100px)
+                const isNearBottom = container.scrollTop + container.clientHeight >= container.scrollHeight - 100;
+
+                if (isNearBottom) {
+                    container.scrollTop = container.scrollHeight;
+                }
+            }
+
+            updateWatchStatus(status) {
+                // Update UI to show connection status
+                let statusElement = document.getElementById('watch-status');
+                if (!statusElement) {
+                    statusElement = document.createElement('div');
+                    statusElement.id = 'watch-status';
+                    statusElement.style.cssText = `
+                        position: fixed;
+                        top: 20px;
+                        right: 20px;
+                        padding: 8px 12px;
+                        border-radius: 6px;
+                        font-size: 0.85em;
+                        font-weight: 600;
+                        z-index: 1000;
+                        transition: all 0.3s ease;
+                    `;
+                    document.body.appendChild(statusElement);
+                }
+
+                switch (status) {
+                    case 'connected':
+                        statusElement.textContent = '🟢 LIVE';
+                        statusElement.style.background = '#d4edda';
+                        statusElement.style.color = '#155724';
+                        statusElement.style.border = '1px solid #c3e6cb';
+                        break;
+                    case 'disconnected':
+                        statusElement.textContent = '🟡 Reconnecting...';
+                        statusElement.style.background = '#fff3cd';
+                        statusElement.style.color = '#856404';
+                        statusElement.style.border = '1px solid #ffeaa7';
+                        break;
+                    case 'error':
+                    case 'failed':
+                        statusElement.textContent = '🔴 Offline';
+                        statusElement.style.background = '#f8d7da';
+                        statusElement.style.color = '#721c24';
+                        statusElement.style.border = '1px solid #f5c6cb';
+                        break;
+                }
+            }
+
+            startWatching() {
+                if (!this.isWatching) {
+                    this.connect();
+                }
+                this.showWatchControls();
+            }
+
+            stopWatching() {
+                this.disconnect();
+                this.hideWatchControls();
+            }
+
+            showWatchControls() {
+                // Add watch control buttons to the UI
+                let controlsContainer = document.getElementById('watch-controls');
+                if (!controlsContainer) {
+                    controlsContainer = document.createElement('div');
+                    controlsContainer.id = 'watch-controls';
+                    controlsContainer.style.cssText = `
+                        position: fixed;
+                        bottom: 20px;
+                        right: 20px;
+                        display: flex;
+                        gap: 10px;
+                        z-index: 1000;
+                    `;
+
+                    const stopBtn = document.createElement('button');
+                    stopBtn.textContent = '⏹️ Stop Watching';
+                    stopBtn.style.cssText = `
+                        background: #dc3545;
+                        color: white;
+                        border: none;
+                        padding: 10px 15px;
+                        border-radius: 6px;
+                        cursor: pointer;
+                        font-size: 0.9em;
+                        transition: background-color 0.2s ease;
+                    `;
+                    stopBtn.onmouseover = () => stopBtn.style.background = '#c82333';
+                    stopBtn.onmouseout = () => stopBtn.style.background = '#dc3545';
+                    stopBtn.onclick = () => this.stopWatching();
+
+                    controlsContainer.appendChild(stopBtn);
+                    document.body.appendChild(controlsContainer);
+                }
+            }
+
+            hideWatchControls() {
+                const controlsContainer = document.getElementById('watch-controls');
+                if (controlsContainer) {
+                    controlsContainer.remove();
+                }
+            }
+        }
+
+        // Global watch manager instance
+        let watchManager = null;
+
+        // Function to start watching
+        function startWatching() {
+            if (!watchManager) {
+                watchManager = new WatchManager();
+            }
+            watchManager.startWatching();
+        }
+
+        // Function to stop watching
+        function stopWatching() {
+            if (watchManager) {
+                watchManager.stopWatching();
+            }
         }
 
         let currentProject = null;

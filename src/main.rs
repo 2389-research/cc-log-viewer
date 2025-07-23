@@ -2,17 +2,24 @@
 // ABOUTME: Parses JSONL conversation logs and serves them via web interface for auditing
 
 use axum::{
-    extract::{Path, State},
+    extract::{
+        ws::{Message, WebSocket},
+        Path, State, WebSocketUpgrade,
+    },
     http::StatusCode,
-    response::{Html, Json},
+    response::{Html, Json, Response},
     routing::{get, get_service},
     Router,
 };
 use chrono::{DateTime, Utc};
 use clap::Parser;
+use dashmap::DashMap;
+use futures_util::{SinkExt, StreamExt};
+use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{fs, path::PathBuf, sync::Arc};
+use std::{fs, path::PathBuf, sync::Arc, time::SystemTime};
+use tokio::sync::broadcast;
 use tower_http::services::ServeDir;
 use walkdir::WalkDir;
 
@@ -72,18 +79,190 @@ struct SessionSummary {
     project_name: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct WatchEvent {
+    #[serde(rename = "type")]
+    event_type: String,
+    project: String,
+    session: Option<String>,
+    entry: Option<LogEntry>,
+    timestamp: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+struct SessionState {
+    project_name: String,
+    session_file: PathBuf,
+    last_position: u64,
+    last_modified: SystemTime,
+}
+
+#[derive(Debug)]
+#[allow(dead_code)]
+struct WatchManager {
+    _watcher: RecommendedWatcher,
+    active_sessions: Arc<DashMap<String, SessionState>>,
+    broadcast_tx: broadcast::Sender<WatchEvent>,
+    projects_dir: PathBuf,
+}
+
+impl WatchManager {
+    fn new(projects_dir: PathBuf) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        let (broadcast_tx, _) = broadcast::channel(1000);
+        let active_sessions = Arc::new(DashMap::new());
+
+        let tx_clone = broadcast_tx.clone();
+        let sessions_clone = active_sessions.clone();
+        let projects_dir_clone = projects_dir.clone();
+
+        let mut watcher = notify::recommended_watcher(move |res: Result<Event, notify::Error>| {
+            if let Ok(event) = res {
+                if let Err(e) =
+                    Self::handle_fs_event(event, &tx_clone, &sessions_clone, &projects_dir_clone)
+                {
+                    eprintln!("Error handling file system event: {}", e);
+                }
+            }
+        })?;
+
+        watcher.watch(&projects_dir, RecursiveMode::Recursive)?;
+
+        Ok(WatchManager {
+            _watcher: watcher,
+            active_sessions,
+            broadcast_tx,
+            projects_dir,
+        })
+    }
+
+    fn handle_fs_event(
+        event: Event,
+        broadcast_tx: &broadcast::Sender<WatchEvent>,
+        active_sessions: &DashMap<String, SessionState>,
+        _projects_dir: &std::path::Path,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        match event.kind {
+            EventKind::Create(_) | EventKind::Modify(_) => {
+                for path in event.paths {
+                    if path.extension().is_some_and(|ext| ext == "jsonl") {
+                        if let Some(project_name) = path
+                            .parent()
+                            .and_then(|p| p.file_name())
+                            .and_then(|n| n.to_str())
+                        {
+                            let session_id = path
+                                .file_stem()
+                                .and_then(|s| s.to_str())
+                                .unwrap_or("unknown")
+                                .to_string();
+
+                            // Read new entries from the file
+                            if let Ok(metadata) = fs::metadata(&path) {
+                                let key = format!("{}:{}", project_name, session_id);
+                                let current_pos =
+                                    if let Some(session_state) = active_sessions.get(&key) {
+                                        session_state.last_position
+                                    } else {
+                                        0
+                                    };
+
+                                if let Ok(entries) = Self::read_new_entries(&path, current_pos) {
+                                    // Update session state
+                                    active_sessions.insert(
+                                        key,
+                                        SessionState {
+                                            project_name: project_name.to_string(),
+                                            session_file: path.clone(),
+                                            last_position: metadata.len(),
+                                            last_modified: metadata
+                                                .modified()
+                                                .unwrap_or(SystemTime::now()),
+                                        },
+                                    );
+
+                                    // Broadcast new entries (limit to prevent spam)
+                                    let max_entries_per_event = 10;
+                                    for entry in entries.into_iter().take(max_entries_per_event) {
+                                        let watch_event = WatchEvent {
+                                            event_type: "log_entry".to_string(),
+                                            project: project_name.to_string(),
+                                            session: Some(session_id.clone()),
+                                            entry: Some(entry),
+                                            timestamp: Utc::now(),
+                                        };
+
+                                        if broadcast_tx.send(watch_event).is_err() {
+                                            // Channel is closed, stop trying to send
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn read_new_entries(
+        path: &PathBuf,
+        from_position: u64,
+    ) -> Result<Vec<LogEntry>, Box<dyn std::error::Error + Send + Sync>> {
+        // Handle potential file access errors gracefully
+        let content = match fs::read_to_string(path) {
+            Ok(content) => content,
+            Err(e) => {
+                eprintln!("Warning: Could not read file {}: {}", path.display(), e);
+                return Ok(Vec::new());
+            }
+        };
+
+        let mut entries = Vec::new();
+        let mut current_pos = 0u64;
+
+        for line in content.lines() {
+            let line_end = current_pos + line.len() as u64 + 1; // +1 for newline
+
+            if current_pos >= from_position {
+                // Only parse lines that look like JSON to avoid errors
+                if line.trim().starts_with('{') && line.trim().ends_with('}') {
+                    if let Ok(entry) = serde_json::from_str::<LogEntry>(line) {
+                        entries.push(entry);
+                    }
+                }
+            }
+
+            current_pos = line_end;
+        }
+
+        Ok(entries)
+    }
+
+    fn subscribe(&self) -> broadcast::Receiver<WatchEvent> {
+        self.broadcast_tx.subscribe()
+    }
+}
+
 #[derive(Debug, Clone)]
 struct AppState {
     projects_dir: PathBuf,
     cached_projects: Arc<tokio::sync::RwLock<Vec<ProjectSummary>>>,
+    watch_manager: Arc<WatchManager>,
 }
 
 impl AppState {
-    fn new(projects_dir: PathBuf) -> Self {
-        Self {
+    fn new(projects_dir: PathBuf) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        let watch_manager = Arc::new(WatchManager::new(projects_dir.clone())?);
+
+        Ok(Self {
             projects_dir,
             cached_projects: Arc::new(tokio::sync::RwLock::new(Vec::new())),
-        }
+            watch_manager,
+        })
     }
 
     async fn refresh_cache(&self) -> Result<(), Box<dyn std::error::Error>> {
@@ -140,6 +319,10 @@ impl AppState {
 
 async fn index() -> Html<&'static str> {
     Html(include_str!("../static/index.html"))
+}
+
+async fn live_activity() -> Html<&'static str> {
+    Html(include_str!("../static/live.html"))
 }
 
 async fn get_projects(
@@ -235,6 +418,59 @@ async fn get_session_logs(
     Ok(Json(entries))
 }
 
+async fn websocket_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> Response {
+    ws.on_upgrade(|socket| handle_websocket(socket, state))
+}
+
+async fn handle_websocket(socket: WebSocket, state: AppState) {
+    let (mut sender, mut receiver) = socket.split();
+    let mut watch_rx = state.watch_manager.subscribe();
+
+    // Handle incoming messages from client
+    let recv_task = tokio::spawn(async move {
+        while let Some(msg) = receiver.next().await {
+            match msg {
+                Ok(Message::Text(text)) => {
+                    println!("Received WebSocket message: {}", text);
+                    // TODO: Handle client messages for subscription management
+                }
+                Ok(Message::Close(_)) => {
+                    println!("WebSocket connection closed");
+                    break;
+                }
+                Err(e) => {
+                    eprintln!("WebSocket error: {}", e);
+                    break;
+                }
+                _ => {}
+            }
+        }
+    });
+
+    // Handle outgoing messages to client
+    let send_task = tokio::spawn(async move {
+        while let Ok(watch_event) = watch_rx.recv().await {
+            let json_msg = match serde_json::to_string(&watch_event) {
+                Ok(json) => json,
+                Err(e) => {
+                    eprintln!("Failed to serialize watch event: {}", e);
+                    continue;
+                }
+            };
+
+            if sender.send(Message::Text(json_msg)).await.is_err() {
+                break;
+            }
+        }
+    });
+
+    // Wait for either task to complete
+    tokio::select! {
+        _ = recv_task => {},
+        _ = send_task => {},
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
@@ -256,16 +492,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::process::exit(1);
     }
 
-    let state = AppState::new(projects_dir);
+    let state = AppState::new(projects_dir)
+        .map_err(|e| format!("Failed to initialize watch manager: {}", e))?;
 
     let app = Router::new()
         .route("/", get(index))
+        .route("/live", get(live_activity))
         .route("/api/projects", get(get_projects))
         .route("/api/projects/:project/sessions", get(get_sessions))
         .route(
             "/api/projects/:project/sessions/:session",
             get(get_session_logs),
         )
+        .route("/ws/watch", get(websocket_handler))
         .nest_service("/static", get_service(ServeDir::new("static")))
         .fallback(index) // Serve index.html for all other routes (SPA routing)
         .with_state(state);
