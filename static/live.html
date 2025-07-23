@@ -194,6 +194,59 @@
             color: #212529;
         }
 
+        /* Tool rendering styles copied from main viewer */
+        .tool-call-container {
+            background: #fff3cd;
+            border: 1px solid #ffeaa7;
+            border-radius: 6px;
+            margin: 0.5rem 0;
+            font-size: 0.85rem;
+        }
+
+        .tool-call-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            background: #ffeaa7;
+            font-weight: 600;
+            color: #856404;
+        }
+
+        .tool-call-content {
+            background: #ffffff;
+            border-radius: 4px;
+            padding: 8px;
+            border-left: 3px solid #ffc107;
+        }
+
+        .tool-result-container {
+            background: #d1ecf1;
+            border: 1px solid #bee5eb;
+            border-radius: 6px;
+            margin: 0.5rem 0;
+            font-size: 0.85rem;
+        }
+
+        .tool-result-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            background: #bee5eb;
+            font-weight: 600;
+            color: #0c5460;
+        }
+
+        .tool-result-content {
+            background: #ffffff;
+            border-radius: 4px;
+            padding: 8px;
+            border-left: 3px solid #17a2b8;
+            font-family: 'Courier New', monospace;
+            font-size: 0.8rem;
+        }
+
         .activity-type.summary {
             background: #6f42c1;
         }
@@ -371,6 +424,597 @@
         // ABOUTME: Live activity stream WebSocket manager for real-time JSONL message monitoring
         // ABOUTME: Displays all incoming messages from all projects in a live scrolling feed
 
+        // Base class for all tool handlers
+        class ToolHandler {
+            constructor(toolName) {
+                this.toolName = toolName;
+            }
+
+            renderToolCall(toolCall) {
+                const toolDiv = document.createElement('div');
+                toolDiv.className = 'tool-call-container';
+
+                const header = this.createHeader(toolCall);
+                const content = this.renderInput(toolCall.input);
+
+                toolDiv.appendChild(header);
+                toolDiv.appendChild(content);
+
+                return toolDiv;
+            }
+
+            renderToolResult(toolResult, toolCall) {
+                const resultDiv = document.createElement('div');
+                resultDiv.className = 'tool-result-container';
+
+                const header = this.createResultHeader(toolCall);
+                const content = this.renderOutput(toolResult, toolCall);
+
+                resultDiv.appendChild(header);
+                resultDiv.appendChild(content);
+
+                return resultDiv;
+            }
+
+            createHeader(toolCall) {
+                const header = document.createElement('div');
+                header.className = 'tool-call-header';
+                header.innerHTML = `<span>${this.getIcon()}</span><span>Tool: ${this.toolName}</span>`;
+                return header;
+            }
+
+            createResultHeader(toolCall) {
+                const header = document.createElement('div');
+                header.className = 'tool-result-header';
+                header.innerHTML = `<span>📋</span><span>${this.toolName} Result</span>`;
+                return header;
+            }
+
+            renderInput(input) {
+                const content = document.createElement('div');
+                content.className = 'tool-call-content';
+                content.textContent = JSON.stringify(input, null, 2);
+                return content;
+            }
+
+            renderOutput(result, toolCall) {
+                const content = document.createElement('div');
+                content.className = 'tool-result-content';
+                content.textContent = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
+                return content;
+            }
+
+            getIcon() {
+                return '🔧';
+            }
+        }
+
+        // Handler for Bash tool
+        class BashHandler extends ToolHandler {
+            constructor() {
+                super('Bash');
+            }
+
+            renderInput(input) {
+                const content = document.createElement('div');
+                content.className = 'tool-call-content';
+
+                const command = document.createElement('div');
+                command.style.fontWeight = 'bold';
+                command.style.marginBottom = '8px';
+                command.textContent = `$ ${input.command}`;
+
+                if (input.description) {
+                    const desc = document.createElement('div');
+                    desc.style.fontStyle = 'italic';
+                    desc.style.color = '#666';
+                    desc.style.marginBottom = '8px';
+                    desc.textContent = input.description;
+                    content.appendChild(desc);
+                }
+
+                content.appendChild(command);
+                return content;
+            }
+
+            renderOutput(result, toolCall) {
+                const content = document.createElement('div');
+                content.className = 'tool-result-content';
+                content.style.fontFamily = 'monospace';
+                content.style.whiteSpace = 'pre-wrap';
+                content.textContent = result;
+                return content;
+            }
+
+            getIcon() { return '💻'; }
+        }
+
+        // Handler for Read tool
+        class ReadHandler extends ToolHandler {
+            constructor() {
+                super('Read');
+            }
+
+            renderInput(input) {
+                const content = document.createElement('div');
+                content.className = 'tool-call-content';
+
+                const path = document.createElement('div');
+                path.style.fontWeight = 'bold';
+                path.textContent = `📄 ${input.file_path}`;
+
+                content.appendChild(path);
+
+                if (input.offset || input.limit) {
+                    const params = document.createElement('div');
+                    params.style.fontSize = '0.9em';
+                    params.style.color = '#666';
+                    params.style.marginTop = '4px';
+                    const offset = input.offset || 0;
+                    const limit = input.limit || 'end';
+                    params.textContent = `Lines: ${offset} to ${limit}`;
+                    content.appendChild(params);
+                }
+
+                return content;
+            }
+
+            renderOutput(result, toolCall) {
+                const content = document.createElement('div');
+                content.className = 'tool-result-content';
+                content.style.fontFamily = 'monospace';
+                content.style.fontSize = '0.85em';
+                content.style.whiteSpace = 'pre';
+                content.style.maxHeight = '400px';
+                content.style.overflowY = 'auto';
+                content.textContent = result;
+                return content;
+            }
+
+            getIcon() { return '📖'; }
+        }
+
+        // Handler for Edit/Write tools
+        class EditHandler extends ToolHandler {
+            constructor() {
+                super('Edit');
+            }
+
+            renderInput(input) {
+                const content = document.createElement('div');
+                content.className = 'tool-call-content';
+
+                const path = document.createElement('div');
+                path.style.fontWeight = 'bold';
+                path.style.marginBottom = '8px';
+                path.textContent = `✏️ ${input.file_path}`;
+
+                if (input.old_string && input.new_string) {
+                    const changeDiv = document.createElement('div');
+                    changeDiv.style.marginTop = '8px';
+                    changeDiv.style.padding = '8px';
+                    changeDiv.style.background = '#f8f9fa';
+                    changeDiv.style.borderRadius = '4px';
+                    changeDiv.style.fontSize = '0.85em';
+
+                    const oldDiv = document.createElement('div');
+                    oldDiv.style.marginBottom = '4px';
+                    oldDiv.innerHTML = `<span style="color: #dc3545; font-weight: bold;">- </span>${this.escapeHtml(input.old_string.substring(0, 100))}${input.old_string.length > 100 ? '...' : ''}`;
+
+                    const newDiv = document.createElement('div');
+                    newDiv.innerHTML = `<span style="color: #28a745; font-weight: bold;">+ </span>${this.escapeHtml(input.new_string.substring(0, 100))}${input.new_string.length > 100 ? '...' : ''}`;
+
+                    changeDiv.appendChild(oldDiv);
+                    changeDiv.appendChild(newDiv);
+                    content.appendChild(changeDiv);
+                }
+
+                content.appendChild(path);
+                return content;
+            }
+
+            escapeHtml(text) {
+                const div = document.createElement('div');
+                div.textContent = text;
+                return div.innerHTML;
+            }
+
+            getIcon() { return '✏️'; }
+        }
+
+        // Handler for MultiEdit tool
+        class MultiEditHandler extends ToolHandler {
+            constructor() {
+                super('MultiEdit');
+            }
+
+            renderInput(input) {
+                const content = document.createElement('div');
+                content.className = 'tool-call-content';
+
+                const multiEditDiv = document.createElement('div');
+                multiEditDiv.style.padding = '12px';
+                multiEditDiv.style.background = '#f8f9fa';
+                multiEditDiv.style.borderRadius = '8px';
+                multiEditDiv.style.border = '1px solid #dee2e6';
+
+                const header = document.createElement('div');
+                header.style.fontWeight = 'bold';
+                header.style.marginBottom = '12px';
+                header.style.borderBottom = '1px solid #ddd';
+                header.style.paddingBottom = '6px';
+                header.textContent = `📝 Multi-Edit: ${input.file_path}`;
+
+                multiEditDiv.appendChild(header);
+
+                if (input.edits && Array.isArray(input.edits)) {
+                    input.edits.forEach((edit, index) => {
+                        const editDiv = document.createElement('div');
+                        editDiv.style.marginBottom = '12px';
+                        editDiv.style.padding = '8px';
+                        editDiv.style.background = '#ffffff';
+                        editDiv.style.borderRadius = '4px';
+                        editDiv.style.border = '1px solid #e9ecef';
+
+                        const editHeader = document.createElement('div');
+                        editHeader.style.fontWeight = 'bold';
+                        editHeader.style.marginBottom = '6px';
+                        editHeader.style.fontSize = '0.9em';
+                        editHeader.textContent = `Edit ${index + 1}:`;
+
+                        const oldDiv = document.createElement('div');
+                        oldDiv.style.marginBottom = '4px';
+                        oldDiv.style.fontSize = '0.85em';
+                        oldDiv.innerHTML = `<span style="color: #dc3545; font-weight: bold;">- </span>${edit.old_string.substring(0, 80)}${edit.old_string.length > 80 ? '...' : ''}`;
+
+                        const newDiv = document.createElement('div');
+                        newDiv.style.fontSize = '0.85em';
+                        newDiv.innerHTML = `<span style="color: #28a745; font-weight: bold;">+ </span>${edit.new_string.substring(0, 80)}${edit.new_string.length > 80 ? '...' : ''}`;
+
+                        editDiv.appendChild(editHeader);
+                        editDiv.appendChild(oldDiv);
+                        editDiv.appendChild(newDiv);
+                        multiEditDiv.appendChild(editDiv);
+                    });
+                }
+
+                content.appendChild(multiEditDiv);
+                return content;
+            }
+
+            getIcon() { return '📝'; }
+        }
+
+        // Handler for Write tool
+        class WriteHandler extends ToolHandler {
+            constructor() {
+                super('Write');
+            }
+
+            renderInput(input) {
+                const content = document.createElement('div');
+                content.className = 'tool-call-content';
+
+                const path = document.createElement('div');
+                path.style.fontWeight = 'bold';
+                path.style.marginBottom = '8px';
+                path.textContent = `📝 ${input.file_path}`;
+
+                const contentInfo = document.createElement('div');
+                contentInfo.style.fontSize = '0.9em';
+                contentInfo.style.color = '#666';
+                const contentLength = input.content ? input.content.length : 0;
+                contentInfo.textContent = `Writing ${contentLength} characters`;
+
+                content.appendChild(path);
+                content.appendChild(contentInfo);
+                return content;
+            }
+
+            getIcon() { return '📝'; }
+        }
+
+        // Handler for LS tool
+        class LSHandler extends ToolHandler {
+            constructor() {
+                super('LS');
+            }
+
+            renderInput(input) {
+                const content = document.createElement('div');
+                content.className = 'tool-call-content';
+
+                const path = document.createElement('div');
+                path.style.fontWeight = 'bold';
+                path.textContent = `📁 ${input.path}`;
+
+                content.appendChild(path);
+                return content;
+            }
+
+            renderOutput(result, toolCall) {
+                const content = document.createElement('div');
+                content.className = 'tool-result-content';
+                content.style.fontFamily = 'monospace';
+                content.style.whiteSpace = 'pre';
+                content.textContent = result;
+                return content;
+            }
+
+            getIcon() { return '📁'; }
+        }
+
+        // Handler for Grep tool
+        class GrepHandler extends ToolHandler {
+            constructor() {
+                super('Grep');
+            }
+
+            renderInput(input) {
+                const content = document.createElement('div');
+                content.className = 'tool-call-content';
+
+                const pattern = document.createElement('div');
+                pattern.style.fontWeight = 'bold';
+                pattern.style.marginBottom = '4px';
+                pattern.textContent = `🔍 "${input.pattern}"`;
+
+                if (input.path) {
+                    const path = document.createElement('div');
+                    path.style.fontSize = '0.9em';
+                    path.style.color = '#666';
+                    path.textContent = `in: ${input.path}`;
+                    content.appendChild(path);
+                }
+
+                content.appendChild(pattern);
+                return content;
+            }
+
+            renderOutput(result, toolCall) {
+                const content = document.createElement('div');
+                content.className = 'tool-result-content';
+                content.style.fontFamily = 'monospace';
+                content.style.fontSize = '0.85em';
+                content.style.whiteSpace = 'pre';
+                content.textContent = result;
+                return content;
+            }
+
+            getIcon() { return '🔍'; }
+        }
+
+        // Handler for Glob tool
+        class GlobHandler extends ToolHandler {
+            constructor() {
+                super('Glob');
+            }
+
+            renderInput(input) {
+                const content = document.createElement('div');
+                content.className = 'tool-call-content';
+
+                const globDiv = document.createElement('div');
+                globDiv.style.padding = '12px';
+                globDiv.style.background = '#fef3c7';
+                globDiv.style.borderRadius = '8px';
+                globDiv.style.border = '1px solid #fbbf24';
+
+                const header = document.createElement('div');
+                header.style.fontWeight = 'bold';
+                header.style.marginBottom = '8px';
+                header.style.color = '#92400e';
+                header.textContent = '🗂️ File Pattern Search';
+
+                const pattern = document.createElement('div');
+                pattern.style.fontFamily = 'monospace';
+                pattern.style.marginBottom = '4px';
+                pattern.textContent = `Pattern: ${input.pattern}`;
+
+                if (input.path) {
+                    const path = document.createElement('div');
+                    path.style.fontSize = '0.9em';
+                    path.style.color = '#666';
+                    path.textContent = `Path: ${input.path}`;
+                    globDiv.appendChild(path);
+                }
+
+                globDiv.appendChild(header);
+                globDiv.appendChild(pattern);
+                content.appendChild(globDiv);
+                return content;
+            }
+
+            renderOutput(result, toolCall) {
+                const content = document.createElement('div');
+                content.className = 'tool-result-content';
+
+                let resultText = result;
+                if (Array.isArray(result) && result[0] && result[0].text) {
+                    resultText = result[0].text;
+                }
+
+                const resultDiv = document.createElement('div');
+                resultDiv.style.fontFamily = 'monospace';
+                resultDiv.style.fontSize = '0.9em';
+
+                if (typeof resultText === 'string' && resultText.includes('\n')) {
+                    const lines = resultText.trim().split('\n').filter(line => line.trim());
+
+                    if (lines.length > 0) {
+                        const headerDiv = document.createElement('div');
+                        headerDiv.style.fontWeight = 'bold';
+                        headerDiv.style.marginBottom = '12px';
+                        headerDiv.style.color = '#374151';
+                        headerDiv.textContent = `Found ${lines.length} matching file${lines.length === 1 ? '' : 's'}:`;
+
+                        const filesDiv = document.createElement('div');
+
+                        lines.forEach(filePath => {
+                            const fileDiv = document.createElement('div');
+                            fileDiv.style.padding = '6px 8px';
+                            fileDiv.style.marginBottom = '4px';
+                            fileDiv.style.background = '#ffffff';
+                            fileDiv.style.borderRadius = '4px';
+                            fileDiv.style.border = '1px solid #e5e7eb';
+                            fileDiv.style.fontFamily = 'monospace';
+                            fileDiv.style.fontSize = '0.85em';
+                            fileDiv.style.wordBreak = 'break-all';
+
+                            // Add file icon based on extension
+                            const extension = filePath.split('.').pop()?.toLowerCase();
+                            let icon = '📄';
+                            if (['js', 'ts', 'jsx', 'tsx'].includes(extension)) icon = '📜';
+                            else if (['py'].includes(extension)) icon = '🐍';
+                            else if (['rs'].includes(extension)) icon = '🦀';
+                            else if (['html', 'htm'].includes(extension)) icon = '🌐';
+                            else if (['css'].includes(extension)) icon = '🎨';
+                            else if (['md'].includes(extension)) icon = '📝';
+                            else if (['json'].includes(extension)) icon = '📋';
+
+                            fileDiv.innerHTML = `${icon} ${filePath}`;
+                            filesDiv.appendChild(fileDiv);
+                        });
+
+                        resultDiv.appendChild(headerDiv);
+                        resultDiv.appendChild(filesDiv);
+                    } else {
+                        resultDiv.style.background = '#fef2f2';
+                        resultDiv.style.border = '1px solid #fecaca';
+                        resultDiv.style.color = '#991b1b';
+                        resultDiv.innerHTML = '❌ No files found matching the pattern';
+                    }
+                } else {
+                    resultDiv.style.whiteSpace = 'pre-wrap';
+                    resultDiv.style.fontFamily = 'monospace';
+                    resultDiv.style.fontSize = '0.9em';
+                    resultDiv.textContent = typeof resultText === 'string' ? resultText : 'No results';
+                }
+
+                content.appendChild(resultDiv);
+                return content;
+            }
+
+            getIcon() { return '🗂️'; }
+        }
+
+        // Handler for TodoWrite tool
+        class TodoWriteHandler extends ToolHandler {
+            constructor() {
+                super('TodoWrite');
+            }
+
+            renderInput(input) {
+                const content = document.createElement('div');
+                content.className = 'tool-call-content';
+
+                if (input.todos && Array.isArray(input.todos)) {
+                    const todoList = document.createElement('div');
+                    todoList.style.marginTop = '8px';
+
+                    const header = document.createElement('div');
+                    header.style.fontWeight = 'bold';
+                    header.style.marginBottom = '8px';
+                    header.style.borderBottom = '1px solid #ddd';
+                    header.style.paddingBottom = '4px';
+                    header.textContent = `📝 Todo List (${input.todos.length} items)`;
+
+                    todoList.appendChild(header);
+
+                    input.todos.forEach(todo => {
+                        const todoItem = document.createElement('div');
+                        todoItem.style.display = 'flex';
+                        todoItem.style.alignItems = 'flex-start';
+                        todoItem.style.marginBottom = '8px';
+                        todoItem.style.padding = '8px';
+                        todoItem.style.borderRadius = '4px';
+                        todoItem.style.fontSize = '0.9em';
+
+                        // Status-based styling
+                        if (todo.status === 'completed') {
+                            todoItem.style.background = '#e8f5e8';
+                            todoItem.style.borderLeft = '3px solid #28a745';
+                        } else if (todo.status === 'in_progress') {
+                            todoItem.style.background = '#fff3cd';
+                            todoItem.style.borderLeft = '3px solid #ffc107';
+                        } else {
+                            todoItem.style.background = '#f8f9fa';
+                            todoItem.style.borderLeft = '3px solid #6c757d';
+                        }
+
+                        // Status icon
+                        const statusIcon = document.createElement('span');
+                        statusIcon.style.marginRight = '8px';
+                        statusIcon.style.fontSize = '1.1em';
+                        if (todo.status === 'completed') {
+                            statusIcon.textContent = '✅';
+                        } else if (todo.status === 'in_progress') {
+                            statusIcon.textContent = '🔄';
+                        } else {
+                            statusIcon.textContent = '⭕';
+                        }
+
+                        // Content container
+                        const contentContainer = document.createElement('div');
+                        contentContainer.style.flex = '1';
+
+                        // Todo content
+                        const todoContent = document.createElement('div');
+                        todoContent.style.marginBottom = '4px';
+                        if (todo.status === 'completed') {
+                            todoContent.style.textDecoration = 'line-through';
+                            todoContent.style.color = '#666';
+                        }
+                        todoContent.textContent = todo.content;
+
+                        // Priority and ID
+                        const metaInfo = document.createElement('div');
+                        metaInfo.style.fontSize = '0.8em';
+                        metaInfo.style.color = '#888';
+
+                        const priorityColor = todo.priority === 'high' ? '#dc3545' :
+                                            todo.priority === 'medium' ? '#fd7e14' : '#28a745';
+                        metaInfo.innerHTML = `<span style="color: ${priorityColor}; font-weight: bold;">●</span> ${todo.priority} priority • ID: ${todo.id}`;
+
+                        contentContainer.appendChild(todoContent);
+                        contentContainer.appendChild(metaInfo);
+
+                        todoItem.appendChild(statusIcon);
+                        todoItem.appendChild(contentContainer);
+                        todoList.appendChild(todoItem);
+                    });
+
+                    content.appendChild(todoList);
+                } else {
+                    content.textContent = JSON.stringify(input, null, 2);
+                }
+
+                return content;
+            }
+
+            getIcon() { return '📝'; }
+        }
+
+        // Tool handler registry
+        const toolHandlers = {
+            'Bash': new BashHandler(),
+            'Read': new ReadHandler(),
+            'Edit': new EditHandler(),
+            'Write': new WriteHandler(),
+            'MultiEdit': new MultiEditHandler(),
+            'LS': new LSHandler(),
+            'Grep': new GrepHandler(),
+            'Glob': new GlobHandler(),
+            'TodoWrite': new TodoWriteHandler(),
+            'Task': new ToolHandler('Task'),
+            'WebFetch': new ToolHandler('WebFetch')
+        };
+
+        // Get appropriate handler for a tool
+        function getToolHandler(toolName) {
+            return toolHandlers[toolName] || new ToolHandler(toolName);
+        }
+
         class LiveActivityManager {
             constructor() {
                 this.ws = null;
@@ -480,9 +1124,20 @@
                 const entryDiv = document.createElement('div');
                 entryDiv.className = 'activity-entry new';
 
+                // Format project path to be more readable
+                let formattedProject = watchEvent.project;
+                if (formattedProject.startsWith('-Users-')) {
+                    // Convert -Users-harper-Public-src-2389-cc-log-viewer to /Users/harper/Public/src/2389/cc-log-viewer
+                    formattedProject = formattedProject.replace(/^-/, '/').replace(/-/g, '/');
+                }
+
+                // Add session ID in parentheses if available
+                const sessionInfo = watchEvent.session ? ` (${watchEvent.session.substring(0, 8)}...)` : '';
+                const source = `${formattedProject}${sessionInfo}`;
+
                 // Determine entry type and content
                 let entryType = 'unknown';
-                let content = '';
+                let contentElements = [];
 
                 if (entry.type) {
                     entryType = entry.type;
@@ -490,36 +1145,102 @@
 
                 if (entry.message && entry.message.content) {
                     if (typeof entry.message.content === 'string') {
-                        content = entry.message.content;
+                        contentElements.push({type: 'text', content: entry.message.content});
                     } else if (Array.isArray(entry.message.content)) {
-                        content = entry.message.content
+                        // Handle mixed content including tool use with rich rendering
+                        const textContent = entry.message.content
                             .filter(c => c.type === 'text')
                             .map(c => c.text)
                             .join('\n');
+
+                        const toolUse = entry.message.content
+                            .filter(c => c.type === 'tool_use');
+
+                        const toolResults = entry.message.content
+                            .filter(c => c.type === 'tool_result');
+
+                        // Add text content if present
+                        if (textContent.trim()) {
+                            contentElements.push({type: 'text', content: textContent});
+                        }
+
+                        // Add tool calls with rich rendering
+                        if (toolUse.length > 0) {
+                            entryType = 'tool';
+                            toolUse.forEach(tool => {
+                                const handler = getToolHandler(tool.name);
+                                contentElements.push({
+                                    type: 'tool_call',
+                                    element: handler.renderToolCall(tool)
+                                });
+                            });
+                        }
+
+                        // Add tool results with rich rendering
+                        if (toolResults.length > 0) {
+                            entryType = 'tool';
+                            toolResults.forEach(result => {
+                                const toolName = result.tool_use_id ? result.tool_use_id.substring(0, 8) : 'unknown';
+                                const handler = getToolHandler(toolName);
+                                const resultContent = result.content || result.text || JSON.stringify(result, null, 2);
+                                contentElements.push({
+                                    type: 'tool_result',
+                                    element: handler.renderToolResult(resultContent, {name: toolName})
+                                });
+                            });
+                        }
                     }
                 } else if (entry.summary) {
-                    content = entry.summary;
+                    contentElements.push({type: 'text', content: entry.summary});
                     entryType = 'summary';
-                }
-
-                // Truncate very long content
-                if (content.length > 500) {
-                    content = content.substring(0, 500) + '...';
+                } else if (entry.tool_use_result) {
+                    // Handle tool results as separate entries
+                    entryType = 'tool';
+                    const handler = getToolHandler('unknown');
+                    const resultContent = typeof entry.tool_use_result === 'string' ?
+                        entry.tool_use_result :
+                        JSON.stringify(entry.tool_use_result, null, 2);
+                    contentElements.push({
+                        type: 'tool_result',
+                        element: handler.renderToolResult(resultContent, {name: 'Tool'})
+                    });
                 }
 
                 const timestamp = new Date(watchEvent.timestamp).toLocaleTimeString();
-                const source = `${watchEvent.project}/${watchEvent.session || 'unknown'}`;
 
-                entryDiv.innerHTML = `
-                    <div class="activity-header">
-                        <div class="activity-source">
-                            <span class="activity-type ${entryType}">${entryType.toUpperCase()}</span>
-                            ${source}
-                        </div>
-                        <div class="activity-timestamp">${timestamp}</div>
+                // Create header
+                const headerDiv = document.createElement('div');
+                headerDiv.className = 'activity-header';
+                headerDiv.innerHTML = `
+                    <div class="activity-source">
+                        <span class="activity-type ${entryType}">${entryType.toUpperCase()}</span>
+                        ${source}
                     </div>
-                    <div class="activity-content">${this.escapeHtml(content) || '<em>No content</em>'}</div>
+                    <div class="activity-timestamp">${timestamp}</div>
                 `;
+                entryDiv.appendChild(headerDiv);
+
+                // Create content area
+                const contentDiv = document.createElement('div');
+                contentDiv.className = 'activity-content';
+
+                if (contentElements.length === 0) {
+                    contentDiv.innerHTML = '<em>No content</em>';
+                } else {
+                    contentElements.forEach(elem => {
+                        if (elem.type === 'text') {
+                            const textDiv = document.createElement('div');
+                            textDiv.style.whiteSpace = 'pre-wrap';
+                            textDiv.textContent = elem.content.length > 500 ?
+                                elem.content.substring(0, 500) + '...' : elem.content;
+                            contentDiv.appendChild(textDiv);
+                        } else if (elem.type === 'tool_call' || elem.type === 'tool_result') {
+                            contentDiv.appendChild(elem.element);
+                        }
+                    });
+                }
+
+                entryDiv.appendChild(contentDiv);
 
                 // Add to stream
                 stream.appendChild(entryDiv);
