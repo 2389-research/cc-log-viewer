@@ -2,6 +2,16 @@
 name = "cc-log-viewer"
 version = "0.1.0"
 edition = "2021"
+authors = ["Harper <harper@2389.ai>"]
+description = "A beautiful, feature-rich web interface for viewing and auditing Claude Code conversation logs"
+license = "MIT"
+repository = "https://github.com/2389-research/cc-log-viewer"
+homepage = "https://github.com/2389-research/cc-log-viewer"
+documentation = "https://github.com/2389-research/cc-log-viewer#readme"
+keywords = ["claude", "code", "logs", "viewer", "web"]
+categories = ["command-line-utilities", "web-programming", "development-tools"]
+readme = "README.md"
+exclude = ["target/", ".git/", "*.log"]
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
