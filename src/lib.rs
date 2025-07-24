@@ -274,8 +274,12 @@ impl AppState {
                             for line in content.lines().take(5) {
                                 if let Ok(entry) = serde_json::from_str::<LogEntry>(line) {
                                     if let Some(timestamp) = entry.timestamp {
-                                        if latest_activity.is_none_or(|latest| timestamp > latest) {
-                                            latest_activity = Some(timestamp);
+                                        match latest_activity {
+                                            None => latest_activity = Some(timestamp),
+                                            Some(latest) if timestamp > latest => {
+                                                latest_activity = Some(timestamp)
+                                            }
+                                            _ => {}
                                         }
                                     }
                                 }
@@ -311,7 +315,8 @@ pub async fn live_activity() -> Html<&'static str> {
 pub async fn get_projects(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<ProjectSummary>>, StatusCode> {
-    if (state.refresh_cache().await).is_err() {
+    if let Err(e) = state.refresh_cache().await {
+        eprintln!("Failed to refresh project cache: {}", e);
         return Err(StatusCode::INTERNAL_SERVER_ERROR);
     }
 
