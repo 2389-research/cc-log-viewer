@@ -20,6 +20,7 @@ use std::{fs, path::PathBuf, sync::Arc, time::SystemTime};
 use tokio::sync::broadcast;
 use walkdir::WalkDir;
 
+pub mod tool_renderer;
 pub mod tui;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -481,8 +482,15 @@ pub async fn export_session_markdown(
         .unwrap())
 }
 
-fn generate_markdown_export(entries: &[LogEntry], session_id: &str, project_name: &str) -> String {
+pub fn generate_markdown_export(
+    entries: &[LogEntry],
+    session_id: &str,
+    project_name: &str,
+) -> String {
+    use tool_renderer::{OutputFormat, RenderContext, ToolRenderer};
+
     let mut markdown = String::new();
+    let renderer = ToolRenderer::new();
 
     // Header
     markdown.push_str(&format!("# Claude Code Session: {}\n\n", session_id));
@@ -526,11 +534,30 @@ fn generate_markdown_export(entries: &[LogEntry], session_id: &str, project_name
                 current_tool_use = Some(entry);
                 if let Some(message) = &entry.message {
                     if let Some(tool_name) = message.get("name").and_then(|n| n.as_str()) {
-                        let tool_icon = get_tool_icon(tool_name);
-                        markdown.push_str(&format!("### {} {}\n\n", tool_icon, tool_name));
-
                         if let Some(input) = message.get("input") {
-                            render_tool_input(&mut markdown, tool_name, input);
+                            let context = RenderContext {
+                                tool_name: tool_name.to_string(),
+                                tool_id: message
+                                    .get("id")
+                                    .and_then(|id| id.as_str())
+                                    .map(|s| s.to_string()),
+                                timestamp: entry
+                                    .timestamp
+                                    .map(|ts| ts.format("%H:%M:%S").to_string()),
+                                session_id: session_id.to_string(),
+                                project_name: project_name.to_string(),
+                            };
+
+                            let rendered = renderer.render_tool(
+                                tool_name,
+                                input,
+                                None,
+                                OutputFormat::Markdown,
+                                &context,
+                            );
+
+                            markdown.push_str(&rendered.header);
+                            markdown.push_str(&rendered.input);
                         }
                     }
                 }
@@ -541,12 +568,30 @@ fn generate_markdown_export(entries: &[LogEntry], session_id: &str, project_name
                         if let Some(message) = &tool_use_entry.message {
                             if let Some(tool_name) = message.get("name").and_then(|n| n.as_str()) {
                                 if let Some(input) = message.get("input") {
-                                    render_tool_result(
-                                        &mut markdown,
+                                    let context = RenderContext {
+                                        tool_name: tool_name.to_string(),
+                                        tool_id: message
+                                            .get("id")
+                                            .and_then(|id| id.as_str())
+                                            .map(|s| s.to_string()),
+                                        timestamp: entry
+                                            .timestamp
+                                            .map(|ts| ts.format("%H:%M:%S").to_string()),
+                                        session_id: session_id.to_string(),
+                                        project_name: project_name.to_string(),
+                                    };
+
+                                    let rendered = renderer.render_tool(
                                         tool_name,
                                         input,
-                                        tool_result,
+                                        Some(tool_result),
+                                        OutputFormat::Markdown,
+                                        &context,
                                     );
+
+                                    if let Some(output) = rendered.output {
+                                        markdown.push_str(&output);
+                                    }
                                 }
                             }
                         }
@@ -566,247 +611,6 @@ fn generate_markdown_export(entries: &[LogEntry], session_id: &str, project_name
     }
 
     markdown
-}
-
-fn get_tool_icon(tool_name: &str) -> &'static str {
-    match tool_name {
-        "Bash" => "💻",
-        "Read" => "📖",
-        "Edit" => "✏️",
-        "MultiEdit" => "🔄",
-        "Write" => "📝",
-        "TodoWrite" => "📝",
-        "LS" => "📂",
-        "Grep" => "🔍",
-        "Glob" => "🌐",
-        "WebFetch" => "🌐",
-        "Task" => "🎯",
-        _ => "🔧",
-    }
-}
-
-fn render_tool_input(markdown: &mut String, tool_name: &str, input: &Value) {
-    match tool_name {
-        "Bash" => render_bash_input(markdown, input),
-        "Read" => render_read_input(markdown, input),
-        "Edit" => render_edit_input(markdown, input),
-        "MultiEdit" => render_multiedit_input(markdown, input),
-        "Write" => render_write_input(markdown, input),
-        "TodoWrite" => render_todowrite_input(markdown, input),
-        "LS" => render_ls_input(markdown, input),
-        "Grep" => render_grep_input(markdown, input),
-        _ => render_generic_input(markdown, input),
-    }
-}
-
-fn render_tool_result(markdown: &mut String, tool_name: &str, input: &Value, result: &Value) {
-    if let Some(content) = result.get("content").and_then(|c| c.as_str()) {
-        match tool_name {
-            "Bash" => render_bash_result(markdown, content),
-            "Read" => render_read_result(markdown, input, content),
-            "Edit" => render_edit_result(markdown, content),
-            "LS" => render_ls_result(markdown, content),
-            "Grep" => render_grep_result(markdown, content),
-            _ => render_generic_result(markdown, content),
-        }
-    }
-}
-
-fn render_bash_input(markdown: &mut String, input: &Value) {
-    if let Some(command) = input.get("command").and_then(|c| c.as_str()) {
-        markdown.push_str("```bash\n");
-        markdown.push_str(&format!("$ {}\n", command));
-        if let Some(description) = input.get("description").and_then(|d| d.as_str()) {
-            markdown.push_str(&format!("# {}\n", description));
-        }
-        markdown.push_str("```\n\n");
-    }
-}
-
-fn render_bash_result(markdown: &mut String, content: &str) {
-    markdown.push_str("**Output:**\n```\n");
-    markdown.push_str(content);
-    markdown.push_str("\n```\n\n");
-}
-
-fn render_read_input(markdown: &mut String, input: &Value) {
-    if let Some(file_path) = input.get("file_path").and_then(|f| f.as_str()) {
-        markdown.push_str(&format!("**📄 {}**\n", file_path));
-
-        if let (Some(offset), Some(limit)) = (
-            input.get("offset").and_then(|o| o.as_u64()),
-            input.get("limit").and_then(|l| l.as_u64()),
-        ) {
-            markdown.push_str(&format!("*Lines: {}-{}*\n", offset + 1, offset + limit));
-        }
-        markdown.push('\n');
-    }
-}
-
-fn render_read_result(markdown: &mut String, _input: &Value, content: &str) {
-    markdown.push_str("**Content:**\n```\n");
-    markdown.push_str(content);
-    markdown.push_str("\n```\n\n");
-}
-
-fn render_edit_input(markdown: &mut String, input: &Value) {
-    if let Some(file_path) = input.get("file_path").and_then(|f| f.as_str()) {
-        markdown.push_str(&format!("**✏️ {}**\n\n", file_path));
-
-        if let (Some(old_string), Some(new_string)) = (
-            input.get("old_string").and_then(|o| o.as_str()),
-            input.get("new_string").and_then(|n| n.as_str()),
-        ) {
-            markdown.push_str("```diff\n");
-            for line in old_string.lines() {
-                markdown.push_str(&format!("- {}\n", line));
-            }
-            for line in new_string.lines() {
-                markdown.push_str(&format!("+ {}\n", line));
-            }
-            markdown.push_str("```\n\n");
-        }
-    }
-}
-
-fn render_edit_result(markdown: &mut String, content: &str) {
-    if !content.trim().is_empty() {
-        markdown.push_str("**Result:**\n```\n");
-        markdown.push_str(content);
-        markdown.push_str("\n```\n\n");
-    }
-}
-
-fn render_multiedit_input(markdown: &mut String, input: &Value) {
-    if let Some(file_path) = input.get("file_path").and_then(|f| f.as_str()) {
-        if let Some(edits) = input.get("edits").and_then(|e| e.as_array()) {
-            markdown.push_str(&format!(
-                "**🔄 Multiple Edits to {} ({} changes)**\n\n",
-                file_path,
-                edits.len()
-            ));
-
-            for (i, edit) in edits.iter().enumerate() {
-                markdown.push_str(&format!("**Edit {}**", i + 1));
-                if let Some(replace_all) = edit.get("replace_all").and_then(|r| r.as_bool()) {
-                    if replace_all {
-                        markdown.push_str(" (replace all)");
-                    }
-                }
-                markdown.push('\n');
-
-                if let (Some(old_string), Some(new_string)) = (
-                    edit.get("old_string").and_then(|o| o.as_str()),
-                    edit.get("new_string").and_then(|n| n.as_str()),
-                ) {
-                    markdown.push_str("```diff\n");
-                    for line in old_string.lines() {
-                        markdown.push_str(&format!("- {}\n", line));
-                    }
-                    for line in new_string.lines() {
-                        markdown.push_str(&format!("+ {}\n", line));
-                    }
-                    markdown.push_str("```\n\n");
-                }
-            }
-        }
-    }
-}
-
-fn render_write_input(markdown: &mut String, input: &Value) {
-    if let Some(file_path) = input.get("file_path").and_then(|f| f.as_str()) {
-        markdown.push_str(&format!("**📝 {}**\n\n", file_path));
-
-        if let Some(content) = input.get("content").and_then(|c| c.as_str()) {
-            markdown.push_str("**Content:**\n```\n");
-            markdown.push_str(content);
-            markdown.push_str("\n```\n\n");
-        }
-    }
-}
-
-fn render_todowrite_input(markdown: &mut String, input: &Value) {
-    if let Some(todos) = input.get("todos").and_then(|t| t.as_array()) {
-        markdown.push_str(&format!("**📝 Todo List ({} items)**\n\n", todos.len()));
-
-        for todo in todos {
-            let status = todo
-                .get("status")
-                .and_then(|s| s.as_str())
-                .unwrap_or("pending");
-            let content = todo.get("content").and_then(|c| c.as_str()).unwrap_or("");
-            let priority = todo
-                .get("priority")
-                .and_then(|p| p.as_str())
-                .unwrap_or("medium");
-            let id = todo.get("id").and_then(|i| i.as_str()).unwrap_or("");
-
-            let (status_icon, format_content) = match status {
-                "completed" => ("✅", format!("~~{}~~", content)),
-                "in_progress" => ("🔄", format!("**{}**", content)),
-                _ => ("⭕", content.to_string()),
-            };
-
-            let priority_icon = match priority {
-                "high" => "🟢",
-                "medium" => "🟠",
-                "low" => "🔴",
-                _ => "⚪",
-            };
-
-            markdown.push_str(&format!("{} {}\n", status_icon, format_content));
-            markdown.push_str(&format!(
-                "{} {} priority • ID: {}\n\n",
-                priority_icon, priority, id
-            ));
-        }
-    }
-}
-
-fn render_ls_input(markdown: &mut String, input: &Value) {
-    if let Some(path) = input.get("path").and_then(|p| p.as_str()) {
-        markdown.push_str(&format!("**📂 {}**\n\n", path));
-    }
-}
-
-fn render_ls_result(markdown: &mut String, content: &str) {
-    markdown.push_str("**Directory listing:**\n```\n");
-    markdown.push_str(content);
-    markdown.push_str("\n```\n\n");
-}
-
-fn render_grep_input(markdown: &mut String, input: &Value) {
-    if let Some(pattern) = input.get("pattern").and_then(|p| p.as_str()) {
-        markdown.push_str(&format!("**Pattern:** `{}`\n", pattern));
-
-        if let Some(path) = input.get("path").and_then(|p| p.as_str()) {
-            markdown.push_str(&format!("**Path:** {}\n", path));
-        }
-
-        if let Some(glob) = input.get("glob").and_then(|g| g.as_str()) {
-            markdown.push_str(&format!("**Glob:** {}\n", glob));
-        }
-
-        markdown.push('\n');
-    }
-}
-
-fn render_grep_result(markdown: &mut String, content: &str) {
-    markdown.push_str("**Matches:**\n```\n");
-    markdown.push_str(content);
-    markdown.push_str("\n```\n\n");
-}
-
-fn render_generic_input(markdown: &mut String, input: &Value) {
-    markdown.push_str("**Input:**\n```json\n");
-    markdown.push_str(&serde_json::to_string_pretty(input).unwrap_or_default());
-    markdown.push_str("\n```\n\n");
-}
-
-fn render_generic_result(markdown: &mut String, content: &str) {
-    markdown.push_str("**Result:**\n```\n");
-    markdown.push_str(content);
-    markdown.push_str("\n```\n\n");
 }
 
 pub async fn websocket_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> Response {
