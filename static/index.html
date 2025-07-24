@@ -2195,6 +2195,14 @@
             }
         }
 
+        // Function to clean up watch manager and prevent connection leaks
+        function cleanupWatchManager() {
+            if (watchManager) {
+                watchManager.disconnect();
+                watchManager = null;
+            }
+        }
+
         let currentProject = null;
         let currentSession = null;
 
@@ -2226,6 +2234,11 @@
                 showProjects(false);
             }
         }
+
+        // Clean up WebSocket connections on page unload to prevent leaks
+        window.addEventListener('beforeunload', function(event) {
+            cleanupWatchManager();
+        });
 
         // Handle browser back/forward buttons
         window.addEventListener('popstate', function(event) {
@@ -2286,6 +2299,7 @@
         }
 
         async function loadSessions(projectName, updateUrl = true) {
+            cleanupWatchManager(); // Clean up any active WebSocket connections
             currentProject = projectName;
             document.getElementById('project-title').textContent = `Sessions - ${projectName}`;
             document.getElementById('projects-view').style.display = 'none';
@@ -2332,6 +2346,7 @@
         }
 
         async function loadSession(projectName, sessionId, updateUrl = true) {
+            cleanupWatchManager(); // Clean up any active WebSocket connections
             currentSession = sessionId;
             document.getElementById('session-title').textContent = `Conversation - ${sessionId}`;
             document.getElementById('sessions-view').style.display = 'none';
@@ -2585,6 +2600,7 @@
         }
 
         function showProjects(updateUrl = true) {
+            cleanupWatchManager(); // Clean up any active WebSocket connections
             document.getElementById('sessions-view').style.display = 'none';
             document.getElementById('log-view').style.display = 'none';
             document.getElementById('projects-view').style.display = 'block';
