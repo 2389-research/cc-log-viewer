@@ -6,6 +6,21 @@ A beautiful, feature-rich web interface for viewing and auditing Claude Code con
 ![Rust](https://img.shields.io/badge/rust-%23000000.svg?style=for-the-badge&logo=rust&logoColor=white)
 ![Web](https://img.shields.io/badge/web-interface-green?style=for-the-badge)
 
+
+## Usage
+
+You can install this locally: 
+
+```
+cargo install cc-log-viewer
+```
+
+and then use it
+
+```
+cc-log-viewer
+```
+
 ## ✨ Features
 
 ### 🎨 **Rich Visual Interface**
