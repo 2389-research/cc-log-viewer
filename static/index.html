@@ -21,17 +21,17 @@
         .container {
             max-width: 1200px;
             margin: 0 auto;
-            padding: 2rem;
+            padding: 1rem 2rem 2rem 2rem;
         }
 
         header {
             text-align: center;
-            margin-bottom: 3rem;
+            margin-bottom: 1rem;
         }
 
         h1 {
             color: white;
-            font-size: 2.5rem;
+            font-size: 1.8rem;
             margin-bottom: 0.5rem;
             text-shadow: 0 2px 4px rgba(0,0,0,0.3);
         }
@@ -2495,12 +2495,12 @@
                                 <span>${session.message_count} entries</span>
                             </div>
                             <div class="session-actions">
-                                <a href="/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(session.id)}/export/markdown" 
-                                   class="small-export-btn" 
+                                <a href="/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(session.id)}/export/markdown"
+                                   class="small-export-btn"
                                    download="${projectName}-${session.id}.md"
                                    onclick="event.stopPropagation()">MD</a>
-                                <a href="/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(session.id)}/export/pdf" 
-                                   class="small-export-btn pdf" 
+                                <a href="/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(session.id)}/export/pdf"
+                                   class="small-export-btn pdf"
                                    download="${projectName}-${session.id}.pdf"
                                    onclick="event.stopPropagation()">PDF</a>
                             </div>
@@ -2522,10 +2522,10 @@
                 alert('No session currently loaded');
                 return;
             }
-            
+
             const url = `/api/projects/${encodeURIComponent(currentProject)}/sessions/${encodeURIComponent(currentSession)}/export/${format}`;
             const filename = `${currentProject}-${currentSession}.${format === 'markdown' ? 'md' : 'pdf'}`;
-            
+
             // Create a temporary link and trigger download
             const link = document.createElement('a');
             link.href = url;

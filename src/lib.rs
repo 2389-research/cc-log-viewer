@@ -2,6 +2,7 @@
 // ABOUTME: Exposes types and handlers for real-time WebSocket monitoring and rich tool rendering
 
 use axum::{
+    body::Body,
     extract::{
         ws::{Message, WebSocket},
         Path, State, WebSocketUpgrade,
@@ -18,6 +19,8 @@ use serde_json::Value;
 use std::{fs, path::PathBuf, sync::Arc, time::SystemTime};
 use tokio::sync::broadcast;
 use walkdir::WalkDir;
+
+pub mod tui;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogEntry {
@@ -464,9 +467,9 @@ pub async fn export_session_markdown(
     }
 
     let markdown_content = generate_markdown_export(&entries, &session_id, &project_name);
-    
+
     let filename = format!("{}-{}.md", project_name, session_id);
-    
+
     Ok(Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "text/markdown; charset=utf-8")
@@ -474,50 +477,8 @@ pub async fn export_session_markdown(
             header::CONTENT_DISPOSITION,
             format!("attachment; filename=\"{}\"", filename),
         )
-        .body(markdown_content)
+        .body(Body::from(markdown_content))
         .unwrap())
-}
-
-pub async fn export_session_pdf(
-    Path((project_name, session_id)): Path<(String, String)>,
-    State(state): State<AppState>,
-) -> Result<Response, StatusCode> {
-    let log_path = state
-        .projects_dir
-        .join(&project_name)
-        .join(format!("{}.jsonl", session_id));
-
-    if !log_path.exists() {
-        return Err(StatusCode::NOT_FOUND);
-    }
-
-    let content = fs::read_to_string(&log_path).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    let mut entries = Vec::new();
-    for line in content.lines() {
-        if let Ok(entry) = serde_json::from_str::<LogEntry>(line) {
-            entries.push(entry);
-        }
-    }
-
-    let html_content = generate_html_export(&entries, &session_id, &project_name);
-    
-    match generate_pdf_from_html(&html_content) {
-        Ok(pdf_data) => {
-            let filename = format!("{}-{}.pdf", project_name, session_id);
-
-            Ok(Response::builder()
-                .status(StatusCode::OK)
-                .header(header::CONTENT_TYPE, "application/pdf")
-                .header(
-                    header::CONTENT_DISPOSITION,
-                    format!("attachment; filename=\"{}\"", filename),
-                )
-                .body(pdf_data)
-                .unwrap())
-        }
-        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
-    }
 }
 
 fn generate_markdown_export(entries: &[LogEntry], session_id: &str, project_name: &str) -> String {
@@ -536,9 +497,8 @@ fn generate_markdown_export(entries: &[LogEntry], session_id: &str, project_name
         }
     }
 
-    
     markdown.push_str("\n---\n\n");
-    
+
     for entry in entries {
         match entry.entry_type.as_deref() {
             Some("summary") => {
@@ -566,7 +526,8 @@ fn generate_markdown_export(entries: &[LogEntry], session_id: &str, project_name
                         if let Some(input) = message.get("input") {
                             markdown.push_str(&format!("### 🔧 Tool: {}\n\n", tool_name));
                             markdown.push_str("**Input:**\n```json\n");
-                            markdown.push_str(&serde_json::to_string_pretty(input).unwrap_or_default());
+                            markdown
+                                .push_str(&serde_json::to_string_pretty(input).unwrap_or_default());
                             markdown.push_str("\n```\n\n");
                         }
                     }
@@ -585,126 +546,14 @@ fn generate_markdown_export(entries: &[LogEntry], session_id: &str, project_name
                 // Handle other entry types if needed
             }
         }
-        
+
         // Add timestamp if available
         if let Some(timestamp) = &entry.timestamp {
             markdown.push_str(&format!("*Time: {}*\n\n", timestamp.format("%H:%M:%S")));
         }
     }
-    
+
     markdown
-}
-
-fn generate_html_export(entries: &[LogEntry], session_id: &str, project_name: &str) -> String {
-    let mut html = String::new();
-    
-    html.push_str("<!DOCTYPE html><html><head>");
-    html.push_str("<meta charset='UTF-8'>");
-    html.push_str(&format!("<title>Claude Code Session: {}</title>", session_id));
-    html.push_str("<style>");
-    html.push_str("body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; line-height: 1.6; margin: 40px; }");
-    html.push_str("h1 { color: #2c3e50; border-bottom: 3px solid #3498db; padding-bottom: 10px; }");
-    html.push_str("h2 { color: #34495e; margin-top: 30px; }");
-    html.push_str("h3 { color: #7f8c8d; }");
-    html.push_str(".user { background: #e8f4fd; padding: 15px; border-left: 4px solid #007bff; margin: 10px 0; }");
-    html.push_str(".assistant { background: #f8f9fa; padding: 15px; border-left: 4px solid #28a745; margin: 10px 0; }");
-    html.push_str(".tool { background: #fff3cd; padding: 15px; border-left: 4px solid #ffc107; margin: 10px 0; }");
-    html.push_str(".timestamp { font-size: 0.8em; color: #6c757d; font-style: italic; }");
-    html.push_str("pre { background: #f4f4f4; padding: 10px; border-radius: 4px; overflow-x: auto; }");
-    html.push_str("</style></head><body>");
-    
-    html.push_str(&format!("<h1>Claude Code Session: {}</h1>", session_id));
-    html.push_str(&format!("<p><strong>Project:</strong> {}</p>", project_name));
-    
-    if let Some(first_entry) = entries.first() {
-        if let Some(timestamp) = &first_entry.timestamp {
-            html.push_str(&format!("<p><strong>Date:</strong> {}</p>", timestamp.format("%Y-%m-%d %H:%M:%S UTC")));
-        }
-    }
-    
-    for entry in entries {
-        match entry.entry_type.as_deref() {
-            Some("summary") => {
-                if let Some(summary) = &entry.summary {
-                    html.push_str(&format!("<div class='summary'><h2>📋 Session Summary</h2><p>{}</p></div>", summary));
-                }
-            }
-            Some("user") => {
-                if let Some(message) = &entry.message {
-                    if let Some(content) = message.get("content").and_then(|c| c.as_str()) {
-                        html.push_str(&format!("<div class='user'><h3>👤 User</h3><p>{}</p>", content.replace('\n', "<br>")));
-                        if let Some(timestamp) = &entry.timestamp {
-                            html.push_str(&format!("<div class='timestamp'>{}</div>", timestamp.format("%H:%M:%S")));
-                        }
-                        html.push_str("</div>");
-                    }
-                }
-            }
-            Some("assistant") => {
-                if let Some(message) = &entry.message {
-                    if let Some(content) = message.get("content").and_then(|c| c.as_str()) {
-                        html.push_str(&format!("<div class='assistant'><h3>🤖 Assistant</h3><p>{}</p>", content.replace('\n', "<br>")));
-                        if let Some(timestamp) = &entry.timestamp {
-                            html.push_str(&format!("<div class='timestamp'>{}</div>", timestamp.format("%H:%M:%S")));
-                        }
-                        html.push_str("</div>");
-                    }
-                }
-            }
-            Some("toolUse") => {
-                if let Some(message) = &entry.message {
-                    if let Some(tool_name) = message.get("name").and_then(|n| n.as_str()) {
-                        html.push_str(&format!("<div class='tool'><h3>🔧 Tool: {}</h3>", tool_name));
-                        if let Some(input) = message.get("input") {
-                            html.push_str("<p><strong>Input:</strong></p><pre>");
-                            html.push_str(&serde_json::to_string_pretty(input).unwrap_or_default());
-                            html.push_str("</pre>");
-                        }
-                        if let Some(timestamp) = &entry.timestamp {
-                            html.push_str(&format!("<div class='timestamp'>{}</div>", timestamp.format("%H:%M:%S")));
-                        }
-                        html.push_str("</div>");
-                    }
-                }
-            }
-            Some("toolResult") => {
-                if let Some(tool_result) = &entry.tool_use_result {
-                    if let Some(content) = tool_result.get("content").and_then(|c| c.as_str()) {
-                        html.push_str("<div class='tool'><p><strong>Result:</strong></p><pre>");
-                        html.push_str(content);
-                        html.push_str("</pre></div>");
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-    
-    html.push_str("</body></html>");
-    html
-}
-
-fn generate_pdf_from_html(html_content: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-    use wkhtmltopdf::*;
-    
-    let mut pdf_app = PdfApplication::new()?;
-    let mut pgo = PdfGlobalSettings::new()?;
-    
-    // Set PDF options
-    pgo.set(PdfGlobalSetting::MarginTop, "1in")?;
-    pgo.set(PdfGlobalSetting::MarginBottom, "1in")?;
-    pgo.set(PdfGlobalSetting::MarginLeft, "0.5in")?;
-    pgo.set(PdfGlobalSetting::MarginRight, "0.5in")?;
-    
-    let mut poo = PdfObjectSettings::new()?;
-    poo.set(PdfObjectSetting::LoadErrorHandling, "ignore")?;
-    poo.set(PdfObjectSetting::WebDefaultEncoding, "utf-8")?;
-    
-    let mut pdf_converter = PdfConverter::new(&mut pdf_app, pgo)?;
-    pdf_converter.add_html_object(poo, html_content)?;
-    
-    let pdf_data = pdf_converter.convert()?;
-    Ok(pdf_data)
 }
 
 pub async fn websocket_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> Response {
