@@ -150,23 +150,17 @@ impl WatchManager {
                                         0
                                     };
 
-                                if let Ok(entries) = Self::read_new_entries(&path, current_pos) {
-                                    // Update session state
-                                    active_sessions.insert(
-                                        key,
-                                        SessionState {
-                                            project_name: project_name.to_string(),
-                                            session_file: path.clone(),
-                                            last_position: metadata.len(),
-                                            last_modified: metadata
-                                                .modified()
-                                                .unwrap_or(SystemTime::now()),
-                                        },
-                                    );
-
+                                if let Ok(entries_with_positions) =
+                                    Self::read_new_entries(&path, current_pos)
+                                {
                                     // Broadcast new entries (limit to prevent spam)
                                     let max_entries_per_event = 10;
-                                    for entry in entries.into_iter().take(max_entries_per_event) {
+                                    let mut last_processed_position = current_pos;
+
+                                    for (entry, entry_position) in entries_with_positions
+                                        .into_iter()
+                                        .take(max_entries_per_event)
+                                    {
                                         let watch_event = WatchEvent {
                                             event_type: "log_entry".to_string(),
                                             project: project_name.to_string(),
@@ -179,7 +173,22 @@ impl WatchManager {
                                             // Channel is closed, stop trying to send
                                             break;
                                         }
+
+                                        last_processed_position = entry_position;
                                     }
+
+                                    // Update session state with the position of the last entry actually processed
+                                    active_sessions.insert(
+                                        key,
+                                        SessionState {
+                                            project_name: project_name.to_string(),
+                                            session_file: path.clone(),
+                                            last_position: last_processed_position,
+                                            last_modified: metadata
+                                                .modified()
+                                                .unwrap_or(SystemTime::now()),
+                                        },
+                                    );
                                 }
                             }
                         }
@@ -194,7 +203,7 @@ impl WatchManager {
     fn read_new_entries(
         path: &PathBuf,
         from_position: u64,
-    ) -> Result<Vec<LogEntry>, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<Vec<(LogEntry, u64)>, Box<dyn std::error::Error + Send + Sync>> {
         // Handle potential file access errors gracefully
         let content = match fs::read_to_string(path) {
             Ok(content) => content,
@@ -204,25 +213,51 @@ impl WatchManager {
             }
         };
 
-        let mut entries = Vec::new();
-        let mut current_pos = 0u64;
+        let content_bytes = content.as_bytes();
+        let mut entries_with_positions = Vec::new();
 
-        for line in content.lines() {
-            let line_end = current_pos + line.len() as u64 + 1; // +1 for newline
+        // Split content into lines while tracking actual byte positions
+        let mut line_start = 0usize;
+        while line_start < content_bytes.len() {
+            // Find the end of the current line
+            let mut line_end = line_start;
+            while line_end < content_bytes.len() && content_bytes[line_end] != b'\n' {
+                line_end += 1;
+            }
 
-            if current_pos >= from_position {
+            // Calculate the byte position of this line
+            let line_byte_start = line_start as u64;
+            let line_byte_end = if line_end < content_bytes.len() {
+                // Include newline character
+                (line_end + 1) as u64
+            } else {
+                // Last line without newline
+                line_end as u64
+            };
+
+            // Process line if it's past our starting position
+            if line_byte_start >= from_position {
+                // Extract the line content (excluding newline)
+                let line_content =
+                    std::str::from_utf8(&content_bytes[line_start..line_end]).unwrap_or("");
+
                 // Only parse lines that look like JSON to avoid errors
-                if line.trim().starts_with('{') && line.trim().ends_with('}') {
-                    if let Ok(entry) = serde_json::from_str::<LogEntry>(line) {
-                        entries.push(entry);
+                if line_content.trim().starts_with('{') && line_content.trim().ends_with('}') {
+                    if let Ok(entry) = serde_json::from_str::<LogEntry>(line_content) {
+                        entries_with_positions.push((entry, line_byte_end));
                     }
                 }
             }
 
-            current_pos = line_end;
+            // Move to next line
+            line_start = if line_end < content_bytes.len() {
+                line_end + 1 // Skip the newline
+            } else {
+                break;
+            };
         }
 
-        Ok(entries)
+        Ok(entries_with_positions)
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<WatchEvent> {
