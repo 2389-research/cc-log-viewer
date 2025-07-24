@@ -30,6 +30,8 @@ tokio-tungstenite = "0.20"
 dashmap = "5.0"
 tokio-stream = "0.1"
 futures-util = "0.3"
+ratatui = "0.28"
+crossterm = "0.28"
 
 [dev-dependencies]
 tempfile = "3.0"

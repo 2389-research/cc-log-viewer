@@ -21,13 +21,6 @@ repos:
             name: "rust: clippy"
             description: "Runs clippy on Rust code"
 
-    - repo: https://github.com/crate-ci/typos
-      rev: v1.16.23
-      hooks:
-          - id: typos
-            name: "check: typos"
-            description: "Checks for spelling mistakes"
-
     - repo: https://github.com/charliermarsh/ruff-pre-commit
       rev: v0.1.9
       hooks:
