@@ -505,7 +505,7 @@ pub async fn export_session_pdf(
     match generate_pdf_from_html(&html_content) {
         Ok(pdf_data) => {
             let filename = format!("{}-{}.pdf", project_name, session_id);
-            
+
             Ok(Response::builder()
                 .status(StatusCode::OK)
                 .header(header::CONTENT_TYPE, "application/pdf")
@@ -522,16 +522,20 @@ pub async fn export_session_pdf(
 
 fn generate_markdown_export(entries: &[LogEntry], session_id: &str, project_name: &str) -> String {
     let mut markdown = String::new();
-    
+
     // Header
     markdown.push_str(&format!("# Claude Code Session: {}\n\n", session_id));
     markdown.push_str(&format!("**Project:** {}\n", project_name));
-    
+
     if let Some(first_entry) = entries.first() {
         if let Some(timestamp) = &first_entry.timestamp {
-            markdown.push_str(&format!("**Date:** {}\n", timestamp.format("%Y-%m-%d %H:%M:%S UTC")));
+            markdown.push_str(&format!(
+                "**Date:** {}\n",
+                timestamp.format("%Y-%m-%d %H:%M:%S UTC")
+            ));
         }
     }
+
     
     markdown.push_str("\n---\n\n");
     
