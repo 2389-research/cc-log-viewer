@@ -1851,37 +1851,52 @@
                 const logEntries = document.getElementById('log-entries');
                 if (!logEntries) return;
 
-                // Create a new message element
-                const messageDiv = document.createElement('div');
-                messageDiv.className = 'message assistant';
-                messageDiv.style.opacity = '0';
-                messageDiv.style.transition = 'opacity 0.3s ease';
+                // Defensive checks for entry structure
+                try {
+                    // Validate entry has required type property
+                    if (typeof entry.type !== 'string' || !entry.type) {
+                        console.warn('appendLogEntry: Invalid or missing entry.type', entry);
+                        return;
+                    }
 
-                // Determine the content based on entry type
-                let content = '';
-                if (entry.type === 'assistant' && entry.message && entry.message.content) {
-                    if (Array.isArray(entry.message.content)) {
-                        entry.message.content.forEach(c => {
-                            if (c.type === 'text') {
-                                content += c.text;
-                            }
-                        });
-                    } else if (typeof entry.message.content === 'string') {
-                        content = entry.message.content;
+                    // Validate entry has message object
+                    if (!entry.message || typeof entry.message !== 'object') {
+                        console.warn('appendLogEntry: Invalid or missing entry.message', entry);
+                        return;
                     }
-                } else if (entry.type === 'user' && entry.message && entry.message.content) {
-                    messageDiv.className = 'message user';
-                    if (typeof entry.message.content === 'string') {
-                        content = entry.message.content;
-                    } else if (Array.isArray(entry.message.content)) {
-                        content = entry.message.content
-                            .filter(c => c.type === 'text')
-                            .map(c => c.text)
-                            .join('\n');
+
+                    // Validate message has content property
+                    if (!entry.message.hasOwnProperty('content')) {
+                        console.warn('appendLogEntry: Missing entry.message.content', entry);
+                        return;
                     }
+
+                    // Create a new message element
+                    const messageDiv = document.createElement('div');
+                    messageDiv.className = 'message assistant';
+                    messageDiv.style.opacity = '0';
+                    messageDiv.style.transition = 'opacity 0.3s ease';
+
+                    // Determine the content based on entry type
+                    let content = '';
+
+                    if (entry.type === 'assistant') {
+                        messageDiv.className = 'message assistant';
+                        content = this.extractTextContent(entry.message.content);
+                    } else if (entry.type === 'user') {
+                        messageDiv.className = 'message user';
+                        content = this.extractTextContent(entry.message.content);
+                    } else {
+                        // Unknown entry type, skip processing
+                        console.warn('appendLogEntry: Unknown entry type:', entry.type);
+                        return;
+                    }
+                } catch (error) {
+                    console.error('appendLogEntry: Error processing entry:', error, entry);
+                    return;
                 }
 
-                if (content.trim()) {
+                if (content && content.trim()) {
                     const avatar = document.createElement('div');
                     avatar.className = entry.type === 'user' ? 'avatar user' : 'avatar assistant';
                     avatar.textContent = entry.type === 'user' ? 'U' : 'AI';
@@ -1895,7 +1910,13 @@
 
                     const messageMeta = document.createElement('div');
                     messageMeta.className = 'message-meta';
-                    messageMeta.textContent = entry.timestamp ? new Date(entry.timestamp).toLocaleString() : '';
+                    try {
+                        const timestamp = entry.timestamp ? new Date(entry.timestamp).toLocaleString() : '';
+                        messageMeta.textContent = timestamp;
+                    } catch (error) {
+                        console.warn('appendLogEntry: Invalid timestamp:', entry.timestamp);
+                        messageMeta.textContent = '';
+                    }
 
                     messageContent.appendChild(messageText);
                     messageContent.appendChild(messageMeta);
@@ -1921,6 +1942,39 @@
 
                     // Auto-scroll to the new entry unless user has scrolled up
                     this.autoScrollToBottom();
+                }
+            }
+
+            // Helper method to safely extract text content from various content formats
+            extractTextContent(content) {
+                try {
+                    if (!content) return '';
+
+                    if (typeof content === 'string') {
+                        return content;
+                    }
+
+                    if (Array.isArray(content)) {
+                        return content
+                            .filter(c => c && typeof c === 'object' && c.type === 'text' && typeof c.text === 'string')
+                            .map(c => c.text)
+                            .join('\n');
+                    }
+
+                    // If content is an object but not an array, try to extract meaningful text
+                    if (typeof content === 'object') {
+                        if (content.text && typeof content.text === 'string') {
+                            return content.text;
+                        }
+                        if (content.content && typeof content.content === 'string') {
+                            return content.content;
+                        }
+                    }
+
+                    return '';
+                } catch (error) {
+                    console.warn('extractTextContent: Error extracting text:', error, content);
+                    return '';
                 }
             }
 
