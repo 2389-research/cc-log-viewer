@@ -330,6 +330,73 @@
             background: #5a6268;
         }
 
+        .export-btn {
+            background: #28a745;
+            color: white;
+            border: none;
+            padding: 0.4rem 0.8rem;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.8rem;
+            margin-left: 0.5rem;
+            transition: background-color 0.2s ease;
+            text-decoration: none;
+            display: inline-block;
+        }
+
+        .export-btn:hover {
+            background: #218838;
+        }
+
+
+        .header-actions {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .session-actions {
+            display: flex;
+            gap: 0.3rem;
+            opacity: 0;
+            transition: opacity 0.2s ease;
+        }
+
+        .session-item:hover .session-actions {
+            opacity: 1;
+        }
+
+        .session-meta {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 0.85rem;
+            color: #95a5a6;
+        }
+
+        .session-meta-left {
+            display: flex;
+            gap: 1rem;
+        }
+
+        .small-export-btn {
+            background: #6c757d;
+            color: white;
+            border: none;
+            padding: 0.2rem 0.4rem;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 0.7rem;
+            text-decoration: none;
+            display: inline-block;
+            transition: background-color 0.2s ease;
+        }
+
+        .small-export-btn:hover {
+            background: #5a6268;
+        }
+
+
         .loading {
             text-align: center;
             padding: 2rem;
@@ -493,8 +560,13 @@
 
         <div id="log-view" class="card log-viewer">
             <div class="card-header">
-                <button class="back-btn" onclick="showSessions()">← Back to Sessions</button>
-                <span id="session-title">Conversation Log</span>
+                <div class="header-actions">
+                    <button class="back-btn" onclick="showSessions()">← Back to Sessions</button>
+                    <span id="session-title">Conversation Log</span>
+                    <div class="export-actions" id="export-actions" style="margin-left: auto;">
+                        <a href="#" class="export-btn" id="export-markdown-btn" onclick="exportSession('markdown')">📄 Markdown</a>
+                    </div>
+                </div>
             </div>
             <div class="card-body">
                 <div id="log-loading" class="loading">
@@ -2393,13 +2465,26 @@
                 sessions.forEach(session => {
                     const sessionItem = document.createElement('div');
                     sessionItem.className = 'session-item';
-                    sessionItem.onclick = () => loadSession(projectName, session.id, true);
+                    sessionItem.onclick = (e) => {
+                        // Only trigger if we didn't click on an export button
+                        if (!e.target.classList.contains('small-export-btn')) {
+                            loadSession(projectName, session.id, true);
+                        }
+                    };
 
                     sessionItem.innerHTML = `
                         <div class="session-title">${session.summary}</div>
                         <div class="session-meta">
-                            <span class="timestamp">${new Date(session.timestamp).toLocaleString()}</span>
-                            <span>${session.message_count} entries</span>
+                            <div class="session-meta-left">
+                                <span class="timestamp">${new Date(session.timestamp).toLocaleString()}</span>
+                                <span>${session.message_count} entries</span>
+                            </div>
+                            <div class="session-actions">
+                                <a href="/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(session.id)}/export/markdown"
+                                   class="small-export-btn"
+                                   download="${projectName}-${session.id}.md"
+                                   onclick="event.stopPropagation()">MD</a>
+                            </div>
                         </div>
                     `;
 
@@ -2411,6 +2496,24 @@
             } finally {
                 document.getElementById('sessions-loading').style.display = 'none';
             }
+        }
+
+        function exportSession(format) {
+            if (!currentProject || !currentSession) {
+                alert('No session currently loaded');
+                return;
+            }
+
+            const url = `/api/projects/${encodeURIComponent(currentProject)}/sessions/${encodeURIComponent(currentSession)}/export/${format}`;
+            const filename = `${currentProject}-${currentSession}.md`;
+
+            // Create a temporary link and trigger download
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = filename;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
         }
 
         async function loadSession(projectName, sessionId, updateUrl = true) {
