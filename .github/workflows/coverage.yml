@@ -1,0 +1,77 @@
+name: Coverage
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  coverage:
+    name: Generate Coverage Report
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Install cargo-tarpaulin
+        run: cargo install cargo-tarpaulin
+
+      - name: Generate coverage report
+        run: |
+          # Run coverage and continue even if some tests fail
+          cargo tarpaulin --verbose --all-features --workspace --timeout 120 --out xml --output-dir ./coverage/ --ignore-panics || true
+          cargo tarpaulin --verbose --all-features --workspace --timeout 120 --out html --output-dir ./coverage/ --ignore-panics || true
+
+      - name: Extract coverage percentage
+        id: coverage
+        run: |
+          if [ -f coverage/cobertura.xml ]; then
+            COVERAGE=$(grep -oP 'line-rate="\K[^"]*' coverage/cobertura.xml | head -1 || echo "0")
+            COVERAGE_PERCENT=$(echo "scale=2; $COVERAGE * 100" | bc | sed 's/\..*$//')
+            echo "coverage=$COVERAGE_PERCENT" >> $GITHUB_OUTPUT
+            echo "Coverage: $COVERAGE_PERCENT%"
+          else
+            echo "coverage=0" >> $GITHUB_OUTPUT
+            echo "Coverage: No data available"
+          fi
+
+      - name: Create coverage summary
+        run: |
+          mkdir -p badges
+          COVERAGE="${{ steps.coverage.outputs.coverage }}"
+          if [ "$COVERAGE" -gt 80 ]; then
+            COLOR="brightgreen"
+          elif [ "$COVERAGE" -gt 60 ]; then
+            COLOR="yellow"
+          else
+            COLOR="red"
+          fi
+          echo "Coverage: $COVERAGE%" > badges/coverage.txt
+          echo "$COVERAGE" > badges/coverage-percent.txt
+          echo "$COLOR" > badges/coverage-color.txt
+
+      - name: Archive coverage results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-report
+          path: |
+            coverage/
+            badges/
