@@ -19,6 +19,8 @@ use std::{fs, path::PathBuf, sync::Arc, time::SystemTime};
 use tokio::sync::broadcast;
 use walkdir::WalkDir;
 
+pub mod tui;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogEntry {
     #[serde(rename = "type")]
