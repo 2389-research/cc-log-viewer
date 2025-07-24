@@ -665,11 +665,35 @@
                         const oldDiv = document.createElement('div');
                         oldDiv.style.marginBottom = '4px';
                         oldDiv.style.fontSize = '0.85em';
-                        oldDiv.innerHTML = `<span style="color: #dc3545; font-weight: bold;">- </span>${edit.old_string.substring(0, 80)}${edit.old_string.length > 80 ? '...' : ''}`;
+
+                        // Create safe elements to prevent HTML injection
+                        const oldSymbol = document.createElement('span');
+                        oldSymbol.style.color = '#dc3545';
+                        oldSymbol.style.fontWeight = 'bold';
+                        oldSymbol.textContent = '- ';
+
+                        const oldText = document.createTextNode(
+                            edit.old_string.substring(0, 80) + (edit.old_string.length > 80 ? '...' : '')
+                        );
+
+                        oldDiv.appendChild(oldSymbol);
+                        oldDiv.appendChild(oldText);
 
                         const newDiv = document.createElement('div');
                         newDiv.style.fontSize = '0.85em';
-                        newDiv.innerHTML = `<span style="color: #28a745; font-weight: bold;">+ </span>${edit.new_string.substring(0, 80)}${edit.new_string.length > 80 ? '...' : ''}`;
+
+                        // Create safe elements to prevent HTML injection
+                        const newSymbol = document.createElement('span');
+                        newSymbol.style.color = '#28a745';
+                        newSymbol.style.fontWeight = 'bold';
+                        newSymbol.textContent = '+ ';
+
+                        const newText = document.createTextNode(
+                            edit.new_string.substring(0, 80) + (edit.new_string.length > 80 ? '...' : '')
+                        );
+
+                        newDiv.appendChild(newSymbol);
+                        newDiv.appendChild(newText);
 
                         editDiv.appendChild(editHeader);
                         editDiv.appendChild(oldDiv);
