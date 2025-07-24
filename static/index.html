@@ -1730,6 +1730,7 @@
                 this.maxReconnectAttempts = 5;
                 this.reconnectDelay = 1000;
                 this.isWatching = false;
+                this.shouldReconnect = false;
             }
 
             connect() {
@@ -1763,7 +1764,9 @@
                         console.log('WebSocket disconnected');
                         this.isWatching = false;
                         this.updateWatchStatus('disconnected');
-                        this.scheduleReconnect();
+                        if (this.shouldReconnect) {
+                            this.scheduleReconnect();
+                        }
                     };
 
                     this.ws.onerror = (error) => {
@@ -1778,6 +1781,8 @@
 
             disconnect() {
                 this.isWatching = false;
+                this.shouldReconnect = false;
+                this.reconnectAttempts = 0;
                 if (this.ws) {
                     this.ws.close();
                     this.ws = null;
@@ -1786,9 +1791,11 @@
             }
 
             scheduleReconnect() {
-                if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-                    console.error('Max reconnection attempts reached');
-                    this.updateWatchStatus('failed');
+                if (!this.shouldReconnect || this.reconnectAttempts >= this.maxReconnectAttempts) {
+                    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+                        console.error('Max reconnection attempts reached');
+                        this.updateWatchStatus('failed');
+                    }
                     return;
                 }
 
@@ -1796,7 +1803,7 @@
                 const delay = this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1);
 
                 setTimeout(() => {
-                    if (!this.isWatching) {
+                    if (this.shouldReconnect && !this.isWatching) {
                         console.log(`Attempting to reconnect (${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
                         this.connect();
                     }
@@ -2122,6 +2129,7 @@
             }
 
             startWatching() {
+                this.shouldReconnect = true; // User wants to maintain connection
                 if (!this.isWatching) {
                     this.connect();
                 }
