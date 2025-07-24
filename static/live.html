@@ -1019,6 +1019,7 @@
             constructor() {
                 this.ws = null;
                 this.isWatching = false;
+                this.shouldReconnect = false;
                 this.messageCount = 0;
                 this.startTime = null;
                 this.reconnectAttempts = 0;
@@ -1083,7 +1084,7 @@
             }
 
             scheduleReconnect() {
-                if (!this.isWatching || this.reconnectAttempts >= this.maxReconnectAttempts) {
+                if (!this.shouldReconnect || this.reconnectAttempts >= this.maxReconnectAttempts) {
                     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
                         this.updateStatus('failed');
                     }
@@ -1094,7 +1095,7 @@
                 const delay = this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1);
 
                 setTimeout(() => {
-                    if (this.isWatching) {
+                    if (this.shouldReconnect) {
                         console.log(`Attempting to reconnect (${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
                         this.connect();
                     }
@@ -1333,12 +1334,14 @@
             }
 
             startWatching() {
+                this.shouldReconnect = true; // User wants to maintain connection
                 this.connect();
                 this.messageCount = 0;
                 this.updateMessageCount();
             }
 
             stopWatching() {
+                this.shouldReconnect = false; // User wants to stop connection
                 this.disconnect();
             }
 
