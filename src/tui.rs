@@ -3,7 +3,6 @@
 
 use crate::{AppState, LogEntry, ProjectSummary, SessionSummary};
 use chrono::Utc;
-use walkdir::WalkDir;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind},
     execute,
@@ -14,13 +13,12 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
-    widgets::{
-        Block, Borders, Clear, List, ListItem, ListState, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap,
-    },
+    widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap},
     Frame, Terminal,
 };
 use std::{fs, io};
 use tokio::time::{Duration, Instant};
+use walkdir::WalkDir;
 
 #[derive(Debug, Clone, PartialEq)]
 enum AppMode {
@@ -98,7 +96,10 @@ impl TuiApp {
         result
     }
 
-    async fn run_app<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> Result<(), Box<dyn std::error::Error>> {
+    async fn run_app<B: Backend>(
+        &mut self,
+        terminal: &mut Terminal<B>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         loop {
             terminal.draw(|f| self.ui(f))?;
 
@@ -124,7 +125,8 @@ impl TuiApp {
                     AppMode::SessionList => {
                         if let Some(project_idx) = self.selected_project {
                             if let Some(project) = self.projects.get(project_idx) {
-                                self.refresh_sessions(&project.name).await?;
+                                let project_name = project.name.clone();
+                                self.refresh_sessions(&project_name).await?;
                             }
                         }
                     }
@@ -133,7 +135,10 @@ impl TuiApp {
                             if let Some(session_idx) = self.selected_session {
                                 if let Some(project) = self.projects.get(project_idx) {
                                     if let Some(session) = self.sessions.get(session_idx) {
-                                        self.refresh_conversation(&project.name, &session.id).await?;
+                                        let project_name = project.name.clone();
+                                        let session_id = session.id.clone();
+                                        self.refresh_conversation(&project_name, &session_id)
+                                            .await?;
                                     }
                                 }
                             }
@@ -153,106 +158,102 @@ impl TuiApp {
             KeyCode::Char('q') => {
                 self.should_quit = true;
             }
-            KeyCode::Esc => {
-                match self.mode {
-                    AppMode::SessionList => {
-                        self.mode = AppMode::ProjectList;
-                        self.selected_session = None;
-                        self.sessions.clear();
-                    }
-                    AppMode::ConversationView => {
-                        self.mode = AppMode::SessionList;
-                        self.selected_message = None;
-                        self.conversation.clear();
-                        self.scroll_offset = 0;
-                    }
-                    AppMode::Export => {
-                        self.mode = AppMode::ConversationView;
-                    }
-                    _ => {}
+            KeyCode::Esc => match self.mode {
+                AppMode::SessionList => {
+                    self.mode = AppMode::ProjectList;
+                    self.selected_session = None;
+                    self.sessions.clear();
                 }
-            }
-            KeyCode::Enter => {
-                match self.mode {
-                    AppMode::ProjectList => {
-                        if let Some(selected) = self.selected_project {
-                            if let Some(project) = self.projects.get(selected) {
-                                self.refresh_sessions(&project.name).await?;
-                                self.mode = AppMode::SessionList;
-                                self.selected_session = Some(0);
-                                self.session_list_state.select(Some(0));
-                            }
+                AppMode::ConversationView => {
+                    self.mode = AppMode::SessionList;
+                    self.selected_message = None;
+                    self.conversation.clear();
+                    self.scroll_offset = 0;
+                }
+                AppMode::Export => {
+                    self.mode = AppMode::ConversationView;
+                }
+                _ => {}
+            },
+            KeyCode::Enter => match self.mode {
+                AppMode::ProjectList => {
+                    if let Some(selected) = self.selected_project {
+                        if let Some(project) = self.projects.get(selected) {
+                            let project_name = project.name.clone();
+                            self.refresh_sessions(&project_name).await?;
+                            self.mode = AppMode::SessionList;
+                            self.selected_session = Some(0);
+                            self.session_list_state.select(Some(0));
                         }
                     }
-                    AppMode::SessionList => {
-                        if let Some(session_idx) = self.selected_session {
-                            if let Some(project_idx) = self.selected_project {
-                                if let Some(project) = self.projects.get(project_idx) {
-                                    if let Some(session) = self.sessions.get(session_idx) {
-                                        self.refresh_conversation(&project.name, &session.id).await?;
-                                        self.mode = AppMode::ConversationView;
-                                        self.selected_message = Some(0);
-                                        self.message_list_state.select(Some(0));
-                                    }
+                }
+                AppMode::SessionList => {
+                    if let Some(session_idx) = self.selected_session {
+                        if let Some(project_idx) = self.selected_project {
+                            if let Some(project) = self.projects.get(project_idx) {
+                                if let Some(session) = self.sessions.get(session_idx) {
+                                    let project_name = project.name.clone();
+                                    let session_id = session.id.clone();
+                                    self.refresh_conversation(&project_name, &session_id)
+                                        .await?;
+                                    self.mode = AppMode::ConversationView;
+                                    self.selected_message = Some(0);
+                                    self.message_list_state.select(Some(0));
                                 }
                             }
                         }
                     }
-                    _ => {}
                 }
-            }
-            KeyCode::Up => {
-                match self.mode {
-                    AppMode::ProjectList => {
-                        if let Some(selected) = self.selected_project {
-                            if selected > 0 {
-                                self.selected_project = Some(selected - 1);
-                                self.project_list_state.select(Some(selected - 1));
-                            }
+                _ => {}
+            },
+            KeyCode::Up => match self.mode {
+                AppMode::ProjectList => {
+                    if let Some(selected) = self.selected_project {
+                        if selected > 0 {
+                            self.selected_project = Some(selected - 1);
+                            self.project_list_state.select(Some(selected - 1));
                         }
                     }
-                    AppMode::SessionList => {
-                        if let Some(selected) = self.selected_session {
-                            if selected > 0 {
-                                self.selected_session = Some(selected - 1);
-                                self.session_list_state.select(Some(selected - 1));
-                            }
-                        }
-                    }
-                    AppMode::ConversationView => {
-                        if self.scroll_offset > 0 {
-                            self.scroll_offset -= 1;
-                        }
-                    }
-                    _ => {}
                 }
-            }
-            KeyCode::Down => {
-                match self.mode {
-                    AppMode::ProjectList => {
-                        if let Some(selected) = self.selected_project {
-                            if selected < self.projects.len().saturating_sub(1) {
-                                self.selected_project = Some(selected + 1);
-                                self.project_list_state.select(Some(selected + 1));
-                            }
+                AppMode::SessionList => {
+                    if let Some(selected) = self.selected_session {
+                        if selected > 0 {
+                            self.selected_session = Some(selected - 1);
+                            self.session_list_state.select(Some(selected - 1));
                         }
                     }
-                    AppMode::SessionList => {
-                        if let Some(selected) = self.selected_session {
-                            if selected < self.sessions.len().saturating_sub(1) {
-                                self.selected_session = Some(selected + 1);
-                                self.session_list_state.select(Some(selected + 1));
-                            }
-                        }
-                    }
-                    AppMode::ConversationView => {
-                        if self.scroll_offset < self.conversation.len().saturating_sub(1) {
-                            self.scroll_offset += 1;
-                        }
-                    }
-                    _ => {}
                 }
-            }
+                AppMode::ConversationView => {
+                    if self.scroll_offset > 0 {
+                        self.scroll_offset -= 1;
+                    }
+                }
+                _ => {}
+            },
+            KeyCode::Down => match self.mode {
+                AppMode::ProjectList => {
+                    if let Some(selected) = self.selected_project {
+                        if selected < self.projects.len().saturating_sub(1) {
+                            self.selected_project = Some(selected + 1);
+                            self.project_list_state.select(Some(selected + 1));
+                        }
+                    }
+                }
+                AppMode::SessionList => {
+                    if let Some(selected) = self.selected_session {
+                        if selected < self.sessions.len().saturating_sub(1) {
+                            self.selected_session = Some(selected + 1);
+                            self.session_list_state.select(Some(selected + 1));
+                        }
+                    }
+                }
+                AppMode::ConversationView => {
+                    if self.scroll_offset < self.conversation.len().saturating_sub(1) {
+                        self.scroll_offset += 1;
+                    }
+                }
+                _ => {}
+            },
             KeyCode::Char('e') => {
                 if self.mode == AppMode::ConversationView {
                     self.mode = AppMode::Export;
@@ -268,7 +269,8 @@ impl TuiApp {
                     AppMode::SessionList => {
                         if let Some(project_idx) = self.selected_project {
                             if let Some(project) = self.projects.get(project_idx) {
-                                self.refresh_sessions(&project.name).await?;
+                                let project_name = project.name.clone();
+                                self.refresh_sessions(&project_name).await?;
                                 self.status_message = "Sessions refreshed".to_string();
                             }
                         }
@@ -278,7 +280,10 @@ impl TuiApp {
                             if let Some(session_idx) = self.selected_session {
                                 if let Some(project) = self.projects.get(project_idx) {
                                     if let Some(session) = self.sessions.get(session_idx) {
-                                        self.refresh_conversation(&project.name, &session.id).await?;
+                                        let project_name = project.name.clone();
+                                        let session_id = session.id.clone();
+                                        self.refresh_conversation(&project_name, &session_id)
+                                            .await?;
                                         self.status_message = "Conversation refreshed".to_string();
                                     }
                                 }
@@ -331,7 +336,9 @@ impl TuiApp {
             .enumerate()
             .map(|(i, project)| {
                 let style = if Some(i) == self.selected_project {
-                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD)
                 } else {
                     Style::default()
                 };
@@ -343,7 +350,10 @@ impl TuiApp {
 
                 ListItem::new(vec![Line::from(vec![
                     Span::styled(format!("📁 {}", project.name), style),
-                    Span::raw(format!(" ({} sessions, last: {})", project.session_count, activity)),
+                    Span::raw(format!(
+                        " ({} sessions, last: {})",
+                        project.session_count, activity
+                    )),
                 ])])
             })
             .collect();
@@ -366,7 +376,9 @@ impl TuiApp {
             .enumerate()
             .map(|(i, session)| {
                 let style = if Some(i) == self.selected_session {
-                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD)
                 } else {
                     Style::default()
                 };
@@ -384,7 +396,10 @@ impl TuiApp {
 
         let title = if let Some(project_idx) = self.selected_project {
             if let Some(project) = self.projects.get(project_idx) {
-                format!("Sessions in {} (↑/↓ to navigate, Enter to select, Esc to go back)", project.name)
+                format!(
+                    "Sessions in {} (↑/↓ to navigate, Enter to select, Esc to go back)",
+                    project.name
+                )
             } else {
                 "Sessions".to_string()
             }
@@ -404,7 +419,10 @@ impl TuiApp {
             if let Some(session_idx) = self.selected_session {
                 if let Some(project) = self.projects.get(project_idx) {
                     if let Some(session) = self.sessions.get(session_idx) {
-                        format!("Conversation: {} / {} (↑/↓ to scroll, e to export, Esc to go back)", project.name, session.summary)
+                        format!(
+                            "Conversation: {} / {} (↑/↓ to scroll, e to export, Esc to go back)",
+                            project.name, session.summary
+                        )
                     } else {
                         "Conversation".to_string()
                     }
@@ -418,26 +436,26 @@ impl TuiApp {
             "Conversation".to_string()
         };
 
-        let visible_messages = self.conversation
+        let visible_messages = self
+            .conversation
             .iter()
             .skip(self.scroll_offset)
             .take(area.height.saturating_sub(2) as usize)
-            .enumerate()
-            .map(|(i, entry)| {
-                let role = entry.message
+            .map(|entry| {
+                let role = entry
+                    .message
                     .as_ref()
                     .and_then(|m| m.get("role"))
                     .and_then(|r| r.as_str())
                     .unwrap_or("system");
 
-                let content = entry.message
+                let content = entry
+                    .message
                     .as_ref()
                     .and_then(|m| m.get("content"))
                     .and_then(|c| {
                         if c.is_string() {
                             c.as_str().map(|s| s.to_string())
-                        } else if c.is_array() {
-                            Some(format!("{}", c))
                         } else {
                             Some(format!("{}", c))
                         }
@@ -456,14 +474,19 @@ impl TuiApp {
                     _ => Style::default().fg(Color::Gray),
                 };
 
-                let timestamp = entry.timestamp
+                let timestamp = entry
+                    .timestamp
                     .map(|dt| dt.format("%H:%M:%S").to_string())
                     .unwrap_or_else(|| "Unknown".to_string());
 
                 Line::from(vec![
                     Span::styled(format!("{} [{}] ", icon, timestamp), style),
                     Span::styled(content.chars().take(120).collect::<String>(), style),
-                    if content.len() > 120 { Span::raw("...") } else { Span::raw("") },
+                    if content.len() > 120 {
+                        Span::raw("...")
+                    } else {
+                        Span::raw("")
+                    },
                 ])
             })
             .collect::<Vec<_>>();
@@ -478,9 +501,9 @@ impl TuiApp {
 
     fn render_export_dialog(&mut self, f: &mut Frame, area: Rect) {
         let popup_area = centered_rect(60, 20, area);
-        
+
         f.render_widget(Clear, popup_area);
-        
+
         let block = Block::default()
             .title("Export Conversation")
             .borders(Borders::ALL)
@@ -505,7 +528,9 @@ impl TuiApp {
         let status_text = match self.mode {
             AppMode::ProjectList => format!("{} | q: Quit, r: Refresh", self.status_message),
             AppMode::SessionList => format!("{} | Esc: Back, r: Refresh", self.status_message),
-            AppMode::ConversationView => format!("{} | Esc: Back, e: Export, r: Refresh", self.status_message),
+            AppMode::ConversationView => {
+                format!("{} | Esc: Back, e: Export, r: Refresh", self.status_message)
+            }
             AppMode::Export => format!("{} | s: Save, Esc: Cancel", self.status_message),
         };
 
@@ -538,7 +563,10 @@ impl TuiApp {
         Ok(())
     }
 
-    async fn refresh_sessions(&mut self, project_name: &str) -> Result<(), Box<dyn std::error::Error>> {
+    async fn refresh_sessions(
+        &mut self,
+        project_name: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let project_path = self.app_state.projects_dir.join(project_name);
 
         if !project_path.exists() {
@@ -550,7 +578,9 @@ impl TuiApp {
 
         for entry in WalkDir::new(&project_path).min_depth(1).max_depth(1) {
             let entry = entry?;
-            if entry.file_type().is_file() && entry.path().extension().is_some_and(|ext| ext == "jsonl") {
+            if entry.file_type().is_file()
+                && entry.path().extension().is_some_and(|ext| ext == "jsonl")
+            {
                 let session_id = entry
                     .path()
                     .file_stem()
@@ -603,8 +633,13 @@ impl TuiApp {
         Ok(())
     }
 
-    async fn refresh_conversation(&mut self, project_name: &str, session_id: &str) -> Result<(), Box<dyn std::error::Error>> {
-        let log_path = self.app_state
+    async fn refresh_conversation(
+        &mut self,
+        project_name: &str,
+        session_id: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let log_path = self
+            .app_state
             .projects_dir
             .join(project_name)
             .join(format!("{}.jsonl", session_id));
@@ -641,11 +676,13 @@ impl TuiApp {
 
         for entry in &self.conversation {
             if let Some(message) = &entry.message {
-                let role = message.get("role")
+                let role = message
+                    .get("role")
                     .and_then(|r| r.as_str())
                     .unwrap_or("system");
 
-                let content = message.get("content")
+                let content = message
+                    .get("content")
                     .and_then(|c| {
                         if c.is_string() {
                             c.as_str().map(|s| s.to_string())
@@ -655,11 +692,17 @@ impl TuiApp {
                     })
                     .unwrap_or_else(|| "No content".to_string());
 
-                let timestamp = entry.timestamp
+                let timestamp = entry
+                    .timestamp
                     .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
                     .unwrap_or_else(|| "Unknown".to_string());
 
-                export_content.push_str(&format!("[{}] {}: {}\n\n", timestamp, role.to_uppercase(), content));
+                export_content.push_str(&format!(
+                    "[{}] {}: {}\n\n",
+                    timestamp,
+                    role.to_uppercase(),
+                    content
+                ));
             }
         }
 

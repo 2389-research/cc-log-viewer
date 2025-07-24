@@ -10,8 +10,8 @@ use std::path::PathBuf;
 use tower_http::services::ServeDir;
 
 use cc_log_viewer::{
-    get_projects, get_session_logs, get_sessions, index, live_activity, websocket_handler, AppState,
-    tui::TuiApp,
+    get_projects, get_session_logs, get_sessions, index, live_activity, tui::TuiApp,
+    websocket_handler, AppState,
 };
 
 #[derive(Parser)]
@@ -58,7 +58,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Terminal UI mode
         println!("🖥️  Starting Claude Code Log Viewer in Terminal UI mode");
         println!("Press 'q' to quit, '↑/↓' to navigate, 'Enter' to select");
-        
+
         let mut tui_app = TuiApp::new(state);
         tui_app.run().await?;
     } else {
