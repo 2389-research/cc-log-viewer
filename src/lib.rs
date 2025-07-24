@@ -481,7 +481,11 @@ pub async fn export_session_markdown(
         .unwrap())
 }
 
-fn generate_markdown_export(entries: &[LogEntry], session_id: &str, project_name: &str) -> String {
+pub fn generate_markdown_export(
+    entries: &[LogEntry],
+    session_id: &str,
+    project_name: &str,
+) -> String {
     let mut markdown = String::new();
 
     // Header
@@ -499,9 +503,16 @@ fn generate_markdown_export(entries: &[LogEntry], session_id: &str, project_name
 
     markdown.push_str("\n---\n\n");
 
-    let mut current_tool_use: Option<&LogEntry> = None;
+    // Track tool uses and their results for association
+    let mut pending_tools: std::collections::HashMap<String, (String, Value)> =
+        std::collections::HashMap::new();
 
     for entry in entries {
+        // Add timestamp first
+        if let Some(timestamp) = &entry.timestamp {
+            markdown.push_str(&format!("*Time: {}*\n\n", timestamp.format("%H:%M:%S")));
+        }
+
         match entry.entry_type.as_deref() {
             Some("summary") => {
                 if let Some(summary) = &entry.summary {
@@ -509,59 +520,82 @@ fn generate_markdown_export(entries: &[LogEntry], session_id: &str, project_name
                 }
             }
             Some("user") => {
+                // Handle tool results first
+                if let Some(tool_result) = &entry.tool_use_result {
+                    if let Some(tool_use_id) =
+                        tool_result.get("tool_use_id").and_then(|id| id.as_str())
+                    {
+                        if let Some((tool_name, input)) = pending_tools.remove(tool_use_id) {
+                            render_tool_result(&mut markdown, &tool_name, &input, tool_result);
+                        }
+                    }
+                }
+
+                // Handle user message content
                 if let Some(message) = &entry.message {
-                    if let Some(content) = message.get("content").and_then(|c| c.as_str()) {
-                        markdown.push_str(&format!("## 👤 User\n\n{}\n\n", content));
+                    if let Some(content_str) = message.get("content").and_then(|c| c.as_str()) {
+                        markdown.push_str(&format!("## 👤 User\n\n{}\n\n", content_str));
                     }
                 }
             }
             Some("assistant") => {
                 if let Some(message) = &entry.message {
-                    if let Some(content) = message.get("content").and_then(|c| c.as_str()) {
-                        markdown.push_str(&format!("## 🤖 Assistant\n\n{}\n\n", content));
-                    }
-                }
-            }
-            Some("toolUse") => {
-                current_tool_use = Some(entry);
-                if let Some(message) = &entry.message {
-                    if let Some(tool_name) = message.get("name").and_then(|n| n.as_str()) {
-                        let tool_icon = get_tool_icon(tool_name);
-                        markdown.push_str(&format!("### {} {}\n\n", tool_icon, tool_name));
+                    if let Some(content_array) = message.get("content").and_then(|c| c.as_array()) {
+                        let mut has_text = false;
+                        let mut text_content = String::new();
 
-                        if let Some(input) = message.get("input") {
-                            render_tool_input(&mut markdown, tool_name, input);
-                        }
-                    }
-                }
-            }
-            Some("toolResult") => {
-                if let Some(tool_use_entry) = current_tool_use {
-                    if let Some(tool_result) = &entry.tool_use_result {
-                        if let Some(message) = &tool_use_entry.message {
-                            if let Some(tool_name) = message.get("name").and_then(|n| n.as_str()) {
-                                if let Some(input) = message.get("input") {
-                                    render_tool_result(
-                                        &mut markdown,
-                                        tool_name,
-                                        input,
-                                        tool_result,
-                                    );
+                        for content_item in content_array {
+                            match content_item.get("type").and_then(|t| t.as_str()) {
+                                Some("text") => {
+                                    if let Some(text) =
+                                        content_item.get("text").and_then(|t| t.as_str())
+                                    {
+                                        if !text.trim().is_empty() {
+                                            text_content.push_str(text);
+                                            has_text = true;
+                                        }
+                                    }
                                 }
+                                Some("tool_use") => {
+                                    if let (Some(tool_id), Some(tool_name), Some(tool_input)) = (
+                                        content_item.get("id").and_then(|id| id.as_str()),
+                                        content_item.get("name").and_then(|n| n.as_str()),
+                                        content_item.get("input"),
+                                    ) {
+                                        // Store tool use for later result matching
+                                        pending_tools.insert(
+                                            tool_id.to_string(),
+                                            (tool_name.to_string(), tool_input.clone()),
+                                        );
+
+                                        // Render tool input immediately
+                                        let tool_icon = get_tool_icon(tool_name);
+                                        markdown.push_str(&format!(
+                                            "### {} {}\n\n",
+                                            tool_icon, tool_name
+                                        ));
+                                        render_tool_input(&mut markdown, tool_name, tool_input);
+                                    }
+                                }
+                                _ => {} // Handle other content types if needed
                             }
                         }
+
+                        // Render assistant text if any
+                        if has_text {
+                            markdown.push_str(&format!("## 🤖 Assistant\n\n{}\n\n", text_content));
+                        }
+                    } else if let Some(content_str) =
+                        message.get("content").and_then(|c| c.as_str())
+                    {
+                        // Fallback for simple string content
+                        markdown.push_str(&format!("## 🤖 Assistant\n\n{}\n\n", content_str));
                     }
                 }
-                current_tool_use = None;
             }
             _ => {
                 // Handle other entry types if needed
             }
-        }
-
-        // Add timestamp if available
-        if let Some(timestamp) = &entry.timestamp {
-            markdown.push_str(&format!("*Time: {}*\n\n", timestamp.format("%H:%M:%S")));
         }
     }
 
@@ -581,6 +615,9 @@ fn get_tool_icon(tool_name: &str) -> &'static str {
         "Glob" => "🌐",
         "WebFetch" => "🌐",
         "Task" => "🎯",
+        "mcp__private-journal__process_thoughts" => "📔",
+        "mcp__socialmedia__login" => "🔐",
+        "mcp__socialmedia__create_post" => "📱",
         _ => "🔧",
     }
 }
@@ -595,6 +632,12 @@ fn render_tool_input(markdown: &mut String, tool_name: &str, input: &Value) {
         "TodoWrite" => render_todowrite_input(markdown, input),
         "LS" => render_ls_input(markdown, input),
         "Grep" => render_grep_input(markdown, input),
+        "Glob" => render_glob_input(markdown, input),
+        "WebFetch" => render_webfetch_input(markdown, input),
+        "Task" => render_task_input(markdown, input),
+        "mcp__private-journal__process_thoughts" => render_journal_input(markdown, input),
+        "mcp__socialmedia__login" => render_social_login_input(markdown, input),
+        "mcp__socialmedia__create_post" => render_social_post_input(markdown, input),
         _ => render_generic_input(markdown, input),
     }
 }
@@ -607,6 +650,12 @@ fn render_tool_result(markdown: &mut String, tool_name: &str, input: &Value, res
             "Edit" => render_edit_result(markdown, content),
             "LS" => render_ls_result(markdown, content),
             "Grep" => render_grep_result(markdown, content),
+            "Glob" => render_glob_result(markdown, content),
+            "WebFetch" => render_webfetch_result(markdown, content),
+            "Task" => render_task_result(markdown, content),
+            "mcp__private-journal__process_thoughts" => render_journal_result(markdown, content),
+            "mcp__socialmedia__login" => render_social_login_result(markdown, content),
+            "mcp__socialmedia__create_post" => render_social_post_result(markdown, content),
             _ => render_generic_result(markdown, content),
         }
     }
@@ -805,6 +854,126 @@ fn render_generic_input(markdown: &mut String, input: &Value) {
 
 fn render_generic_result(markdown: &mut String, content: &str) {
     markdown.push_str("**Result:**\n```\n");
+    markdown.push_str(content);
+    markdown.push_str("\n```\n\n");
+}
+
+// Missing tool input handlers
+fn render_glob_input(markdown: &mut String, input: &Value) {
+    if let Some(pattern) = input.get("pattern").and_then(|p| p.as_str()) {
+        markdown.push_str(&format!("**Pattern:** `{}`\n", pattern));
+
+        if let Some(path) = input.get("path").and_then(|p| p.as_str()) {
+            markdown.push_str(&format!("**Path:** {}\n", path));
+        }
+
+        markdown.push('\n');
+    }
+}
+
+fn render_webfetch_input(markdown: &mut String, input: &Value) {
+    if let Some(url) = input.get("url").and_then(|u| u.as_str()) {
+        markdown.push_str(&format!("**🌐 URL:** {}\n", url));
+
+        if let Some(prompt) = input.get("prompt").and_then(|p| p.as_str()) {
+            markdown.push_str(&format!("**Query:** {}\n", prompt));
+        }
+
+        markdown.push('\n');
+    }
+}
+
+fn render_task_input(markdown: &mut String, input: &Value) {
+    if let Some(description) = input.get("description").and_then(|d| d.as_str()) {
+        markdown.push_str(&format!("**Task:** {}\n", description));
+    }
+
+    if let Some(prompt) = input.get("prompt").and_then(|p| p.as_str()) {
+        markdown.push_str("**Instructions:**\n");
+        markdown.push_str("> ");
+        // Convert multiline prompt into blockquote format
+        markdown.push_str(&prompt.replace('\n', "\n> "));
+        markdown.push_str("\n\n");
+    }
+}
+
+fn render_journal_input(markdown: &mut String, input: &Value) {
+    markdown.push_str("**📔 Private Journal Entry**\n\n");
+
+    for (key, value) in input.as_object().unwrap_or(&serde_json::Map::new()) {
+        if let Some(content) = value.as_str() {
+            if !content.trim().is_empty() {
+                let section_name = key.replace('_', " ").to_uppercase();
+                markdown.push_str(&format!("**{}:**\n", section_name));
+                markdown.push_str("> ");
+                markdown.push_str(&content.replace('\n', "\n> "));
+                markdown.push_str("\n\n");
+            }
+        }
+    }
+}
+
+fn render_social_login_input(markdown: &mut String, input: &Value) {
+    markdown.push_str("**🔐 Social Media Login**\n");
+
+    if let Some(platform) = input.get("platform").and_then(|p| p.as_str()) {
+        markdown.push_str(&format!("**Platform:** {}\n", platform));
+    }
+
+    markdown.push('\n');
+}
+
+fn render_social_post_input(markdown: &mut String, input: &Value) {
+    markdown.push_str("**📱 Creating Social Media Post**\n");
+
+    if let Some(content) = input.get("content").and_then(|c| c.as_str()) {
+        markdown.push_str("**Content:**\n");
+        markdown.push_str("> ");
+        markdown.push_str(&content.replace('\n', "\n> "));
+        markdown.push_str("\n\n");
+    }
+
+    if let Some(platform) = input.get("platform").and_then(|p| p.as_str()) {
+        markdown.push_str(&format!("**Platform:** {}\n\n", platform));
+    }
+}
+
+// Missing tool result handlers
+fn render_glob_result(markdown: &mut String, content: &str) {
+    markdown.push_str("**Found files:**\n```\n");
+    markdown.push_str(content);
+    markdown.push_str("\n```\n\n");
+}
+
+fn render_webfetch_result(markdown: &mut String, content: &str) {
+    markdown.push_str("**Fetched content:**\n");
+    markdown.push_str("> ");
+    markdown.push_str(&content.replace('\n', "\n> "));
+    markdown.push_str("\n\n");
+}
+
+fn render_task_result(markdown: &mut String, content: &str) {
+    markdown.push_str("**Task completion:**\n");
+    markdown.push_str("> ");
+    markdown.push_str(&content.replace('\n', "\n> "));
+    markdown.push_str("\n\n");
+}
+
+fn render_journal_result(markdown: &mut String, content: &str) {
+    markdown.push_str("**Journal saved:**\n");
+    markdown.push_str("> ");
+    markdown.push_str(&content.replace('\n', "\n> "));
+    markdown.push_str("\n\n");
+}
+
+fn render_social_login_result(markdown: &mut String, content: &str) {
+    markdown.push_str("**Login result:**\n```\n");
+    markdown.push_str(content);
+    markdown.push_str("\n```\n\n");
+}
+
+fn render_social_post_result(markdown: &mut String, content: &str) {
+    markdown.push_str("**Post result:**\n```\n");
     markdown.push_str(content);
     markdown.push_str("\n```\n\n");
 }
