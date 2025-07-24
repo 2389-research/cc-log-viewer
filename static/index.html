@@ -348,13 +348,6 @@
             background: #218838;
         }
 
-        .export-btn.pdf {
-            background: #dc3545;
-        }
-
-        .export-btn.pdf:hover {
-            background: #c82333;
-        }
 
         .header-actions {
             display: flex;
@@ -403,13 +396,6 @@
             background: #5a6268;
         }
 
-        .small-export-btn.pdf {
-            background: #dc3545;
-        }
-
-        .small-export-btn.pdf:hover {
-            background: #c82333;
-        }
 
         .loading {
             text-align: center;
@@ -579,7 +565,6 @@
                     <span id="session-title">Conversation Log</span>
                     <div class="export-actions" id="export-actions" style="margin-left: auto;">
                         <a href="#" class="export-btn" id="export-markdown-btn" onclick="exportSession('markdown')">📄 Markdown</a>
-                        <a href="#" class="export-btn pdf" id="export-pdf-btn" onclick="exportSession('pdf')">📋 PDF</a>
                     </div>
                 </div>
             </div>
@@ -2499,10 +2484,6 @@
                                    class="small-export-btn"
                                    download="${projectName}-${session.id}.md"
                                    onclick="event.stopPropagation()">MD</a>
-                                <a href="/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(session.id)}/export/pdf"
-                                   class="small-export-btn pdf"
-                                   download="${projectName}-${session.id}.pdf"
-                                   onclick="event.stopPropagation()">PDF</a>
                             </div>
                         </div>
                     `;
@@ -2524,7 +2505,7 @@
             }
 
             const url = `/api/projects/${encodeURIComponent(currentProject)}/sessions/${encodeURIComponent(currentSession)}/export/${format}`;
-            const filename = `${currentProject}-${currentSession}.${format === 'markdown' ? 'md' : 'pdf'}`;
+            const filename = `${currentProject}-${currentSession}.md`;
 
             // Create a temporary link and trigger download
             const link = document.createElement('a');
