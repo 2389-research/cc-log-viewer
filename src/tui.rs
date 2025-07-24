@@ -21,7 +21,7 @@ use tokio::time::{Duration, Instant};
 use walkdir::WalkDir;
 
 #[derive(Debug, Clone, PartialEq)]
-enum AppMode {
+pub enum AppMode {
     ProjectList,
     SessionList,
     ConversationView,
@@ -31,10 +31,10 @@ enum AppMode {
 #[derive(Debug)]
 pub struct TuiApp {
     app_state: AppState,
-    mode: AppMode,
-    projects: Vec<ProjectSummary>,
-    sessions: Vec<SessionSummary>,
-    conversation: Vec<LogEntry>,
+    pub mode: AppMode,
+    pub projects: Vec<ProjectSummary>,
+    pub sessions: Vec<SessionSummary>,
+    pub conversation: Vec<LogEntry>,
     selected_project: Option<usize>,
     selected_session: Option<usize>,
     selected_message: Option<usize>,
@@ -42,7 +42,7 @@ pub struct TuiApp {
     session_list_state: ListState,
     message_list_state: ListState,
     scroll_offset: usize,
-    status_message: String,
+    pub status_message: String,
     should_quit: bool,
     last_update: Instant,
 }
@@ -542,7 +542,7 @@ impl TuiApp {
         f.render_widget(status, area);
     }
 
-    async fn refresh_projects(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn refresh_projects(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         if let Err(e) = self.app_state.refresh_cache().await {
             self.status_message = format!("Failed to refresh projects: {}", e);
             return Ok(());
@@ -563,7 +563,7 @@ impl TuiApp {
         Ok(())
     }
 
-    async fn refresh_sessions(
+    pub async fn refresh_sessions(
         &mut self,
         project_name: &str,
     ) -> Result<(), Box<dyn std::error::Error>> {
@@ -633,7 +633,7 @@ impl TuiApp {
         Ok(())
     }
 
-    async fn refresh_conversation(
+    pub async fn refresh_conversation(
         &mut self,
         project_name: &str,
         session_id: &str,
@@ -664,7 +664,7 @@ impl TuiApp {
         Ok(())
     }
 
-    async fn export_conversation(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn export_conversation(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         if self.conversation.is_empty() {
             self.status_message = "No conversation to export".to_string();
             return Ok(());
