@@ -1731,6 +1731,7 @@
                 this.reconnectDelay = 1000;
                 this.isWatching = false;
                 this.shouldReconnect = false;
+                this.cleanupTimer = null;
             }
 
             connect() {
@@ -1783,6 +1784,7 @@
                 this.isWatching = false;
                 this.shouldReconnect = false;
                 this.reconnectAttempts = 0;
+                this.stopCleanupTimer(); // Stop periodic cleanup
                 if (this.ws) {
                     this.ws.close();
                     this.ws = null;
@@ -2070,6 +2072,44 @@
                 }
             }
 
+            cleanupStaleActivityBadges() {
+                const STALE_THRESHOLD = 30000; // 30 seconds
+                const now = Date.now();
+                const staleBadges = [];
+
+                // Find stale entries in the activityIndicators map
+                for (const [key, timestamp] of this.activityIndicators.entries()) {
+                    if (now - timestamp > STALE_THRESHOLD) {
+                        staleBadges.push(key);
+                    }
+                }
+
+                // Clean up stale entries and their DOM badges
+                staleBadges.forEach(key => {
+                    const [project, session] = key.includes(':') ? key.split(':') : [key, null];
+
+                    // Remove from map
+                    this.activityIndicators.delete(key);
+
+                    // Remove DOM badge if it still exists
+                    this.removeActivityBadge(project, session);
+                });
+
+                // Also clean up any orphaned DOM badges that might exist
+                const allBadges = document.querySelectorAll('.activity-badge');
+                allBadges.forEach(badge => {
+                    const parent = badge.parentElement;
+                    if (!parent || !parent.isConnected) {
+                        // Badge's parent is no longer in the DOM, remove badge
+                        badge.remove();
+                    }
+                });
+
+                if (staleBadges.length > 0) {
+                    console.debug(`Cleaned up ${staleBadges.length} stale activity badges`);
+                }
+            }
+
             autoScrollToBottom() {
                 const logEntries = document.getElementById('log-entries');
                 if (!logEntries) return;
@@ -2128,15 +2168,33 @@
                 }
             }
 
+            startCleanupTimer() {
+                // Start periodic cleanup every 60 seconds
+                if (!this.cleanupTimer) {
+                    this.cleanupTimer = setInterval(() => {
+                        this.cleanupStaleActivityBadges();
+                    }, 60000); // 60 seconds
+                }
+            }
+
+            stopCleanupTimer() {
+                if (this.cleanupTimer) {
+                    clearInterval(this.cleanupTimer);
+                    this.cleanupTimer = null;
+                }
+            }
+
             startWatching() {
                 this.shouldReconnect = true; // User wants to maintain connection
                 if (!this.isWatching) {
                     this.connect();
                 }
+                this.startCleanupTimer(); // Start periodic cleanup
                 this.showWatchControls();
             }
 
             stopWatching() {
+                this.stopCleanupTimer(); // Stop periodic cleanup
                 this.disconnect();
                 this.hideWatchControls();
             }
@@ -2206,6 +2264,8 @@
         // Function to clean up watch manager and prevent connection leaks
         function cleanupWatchManager() {
             if (watchManager) {
+                // Clean up stale activity badges before disconnecting
+                watchManager.cleanupStaleActivityBadges();
                 watchManager.disconnect();
                 watchManager = null;
             }
