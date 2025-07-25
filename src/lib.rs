@@ -2,11 +2,12 @@
 // ABOUTME: Exposes types and handlers for real-time WebSocket monitoring and rich tool rendering
 
 use axum::{
+    body::Body,
     extract::{
         ws::{Message, WebSocket},
         Path, State, WebSocketUpgrade,
     },
-    http::StatusCode,
+    http::{header, StatusCode},
     response::{Html, Json, Response},
 };
 use chrono::{DateTime, Utc};
@@ -19,6 +20,7 @@ use std::{fs, path::PathBuf, sync::Arc, time::SystemTime};
 use tokio::sync::broadcast;
 use walkdir::WalkDir;
 
+pub mod tool_renderer;
 pub mod tui;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -441,6 +443,175 @@ pub async fn get_session_logs(
     }
 
     Ok(Json(entries))
+}
+
+pub async fn export_session_markdown(
+    Path((project_name, session_id)): Path<(String, String)>,
+    State(state): State<AppState>,
+) -> Result<Response, StatusCode> {
+    let log_path = state
+        .projects_dir
+        .join(&project_name)
+        .join(format!("{}.jsonl", session_id));
+
+    if !log_path.exists() {
+        return Err(StatusCode::NOT_FOUND);
+    }
+
+    let content = fs::read_to_string(&log_path).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let mut entries = Vec::new();
+    for line in content.lines() {
+        if let Ok(entry) = serde_json::from_str::<LogEntry>(line) {
+            entries.push(entry);
+        }
+    }
+
+    let markdown_content = generate_markdown_export(&entries, &session_id, &project_name);
+
+    let filename = format!("{}-{}.md", project_name, session_id);
+
+    Ok(Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/markdown; charset=utf-8")
+        .header(
+            header::CONTENT_DISPOSITION,
+            format!("attachment; filename=\"{}\"", filename),
+        )
+        .body(Body::from(markdown_content))
+        .unwrap())
+}
+
+pub fn generate_markdown_export(
+    entries: &[LogEntry],
+    session_id: &str,
+    project_name: &str,
+) -> String {
+    use tool_renderer::{OutputFormat, RenderContext, ToolRenderer};
+
+    let mut markdown = String::new();
+    let renderer = ToolRenderer::new();
+
+    // Header
+    markdown.push_str(&format!("# Claude Code Session: {}\n\n", session_id));
+    markdown.push_str(&format!("**Project:** {}\n", project_name));
+
+    if let Some(first_entry) = entries.first() {
+        if let Some(timestamp) = &first_entry.timestamp {
+            markdown.push_str(&format!(
+                "**Date:** {}\n",
+                timestamp.format("%Y-%m-%d %H:%M:%S UTC")
+            ));
+        }
+    }
+
+    markdown.push_str("\n---\n\n");
+
+    let mut pending_tool_uses: std::collections::HashMap<String, (String, Value, RenderContext)> =
+        std::collections::HashMap::new();
+
+    for entry in entries {
+        match entry.entry_type.as_deref() {
+            Some("summary") => {
+                if let Some(summary) = &entry.summary {
+                    markdown.push_str(&format!("## 📋 Session Summary\n\n{}\n\n", summary));
+                }
+            }
+            Some("user") => {
+                if let Some(message) = &entry.message {
+                    if let Some(content) = message.get("content").and_then(|c| c.as_str()) {
+                        markdown.push_str(&format!("## 👤 User\n\n{}\n\n", content));
+                    }
+                }
+            }
+            Some("assistant") => {
+                if let Some(message) = &entry.message {
+                    // Handle regular assistant text content
+                    if let Some(content) = message.get("content").and_then(|c| c.as_str()) {
+                        if !content.trim().is_empty() {
+                            markdown.push_str(&format!("## 🤖 Assistant\n\n{}\n\n", content));
+                        }
+                    }
+
+                    // Handle tool calls nested in assistant messages
+                    if let Some(content_array) = message.get("content").and_then(|c| c.as_array()) {
+                        for content_item in content_array {
+                            if let Some(item_type) =
+                                content_item.get("type").and_then(|t| t.as_str())
+                            {
+                                if item_type == "tool_use" {
+                                    if let (Some(tool_name), Some(tool_id), Some(input)) = (
+                                        content_item.get("name").and_then(|n| n.as_str()),
+                                        content_item.get("id").and_then(|i| i.as_str()),
+                                        content_item.get("input"),
+                                    ) {
+                                        let context = RenderContext {
+                                            tool_name: tool_name.to_string(),
+                                            tool_id: Some(tool_id.to_string()),
+                                            timestamp: entry
+                                                .timestamp
+                                                .map(|ts| ts.format("%H:%M:%S").to_string()),
+                                            session_id: session_id.to_string(),
+                                            project_name: project_name.to_string(),
+                                        };
+
+                                        let rendered = renderer.render_tool(
+                                            tool_name,
+                                            input,
+                                            None,
+                                            OutputFormat::Markdown,
+                                            &context,
+                                        );
+
+                                        markdown.push_str(&rendered.header);
+                                        markdown.push_str(&rendered.input);
+
+                                        // Store for matching with results later
+                                        pending_tool_uses.insert(
+                                            tool_id.to_string(),
+                                            (tool_name.to_string(), input.clone(), context),
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {
+                // Handle tool results from standalone entries
+                if let Some(tool_result) = &entry.tool_use_result {
+                    // Try to find matching tool use
+                    if let Some(tool_use_id) =
+                        tool_result.get("tool_use_id").and_then(|id| id.as_str())
+                    {
+                        if let Some((tool_name, input, context)) =
+                            pending_tool_uses.remove(tool_use_id)
+                        {
+                            let rendered = renderer.render_tool(
+                                &tool_name,
+                                &input,
+                                Some(tool_result),
+                                OutputFormat::Markdown,
+                                &context,
+                            );
+
+                            if let Some(output) = rendered.output {
+                                markdown.push_str(&output);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Add timestamp if available
+        if let Some(timestamp) = &entry.timestamp {
+            markdown.push_str(&format!("*Time: {}*\n\n", timestamp.format("%H:%M:%S")));
+        }
+    }
+
+    markdown
 }
 
 pub async fn websocket_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> Response {
