@@ -507,7 +507,8 @@ pub fn generate_markdown_export(
 
     markdown.push_str("\n---\n\n");
 
-    let mut current_tool_use: Option<&LogEntry> = None;
+    let mut pending_tool_uses: std::collections::HashMap<String, (String, Value, RenderContext)> =
+        std::collections::HashMap::new();
 
     for entry in entries {
         match entry.entry_type.as_deref() {
@@ -525,82 +526,82 @@ pub fn generate_markdown_export(
             }
             Some("assistant") => {
                 if let Some(message) = &entry.message {
+                    // Handle regular assistant text content
                     if let Some(content) = message.get("content").and_then(|c| c.as_str()) {
-                        markdown.push_str(&format!("## 🤖 Assistant\n\n{}\n\n", content));
-                    }
-                }
-            }
-            Some("toolUse") => {
-                current_tool_use = Some(entry);
-                if let Some(message) = &entry.message {
-                    if let Some(tool_name) = message.get("name").and_then(|n| n.as_str()) {
-                        if let Some(input) = message.get("input") {
-                            let context = RenderContext {
-                                tool_name: tool_name.to_string(),
-                                tool_id: message
-                                    .get("id")
-                                    .and_then(|id| id.as_str())
-                                    .map(|s| s.to_string()),
-                                timestamp: entry
-                                    .timestamp
-                                    .map(|ts| ts.format("%H:%M:%S").to_string()),
-                                session_id: session_id.to_string(),
-                                project_name: project_name.to_string(),
-                            };
-
-                            let rendered = renderer.render_tool(
-                                tool_name,
-                                input,
-                                None,
-                                OutputFormat::Markdown,
-                                &context,
-                            );
-
-                            markdown.push_str(&rendered.header);
-                            markdown.push_str(&rendered.input);
+                        if !content.trim().is_empty() {
+                            markdown.push_str(&format!("## 🤖 Assistant\n\n{}\n\n", content));
                         }
                     }
-                }
-            }
-            Some("toolResult") => {
-                if let Some(tool_use_entry) = current_tool_use {
-                    if let Some(tool_result) = &entry.tool_use_result {
-                        if let Some(message) = &tool_use_entry.message {
-                            if let Some(tool_name) = message.get("name").and_then(|n| n.as_str()) {
-                                if let Some(input) = message.get("input") {
-                                    let context = RenderContext {
-                                        tool_name: tool_name.to_string(),
-                                        tool_id: message
-                                            .get("id")
-                                            .and_then(|id| id.as_str())
-                                            .map(|s| s.to_string()),
-                                        timestamp: entry
-                                            .timestamp
-                                            .map(|ts| ts.format("%H:%M:%S").to_string()),
-                                        session_id: session_id.to_string(),
-                                        project_name: project_name.to_string(),
-                                    };
 
-                                    let rendered = renderer.render_tool(
-                                        tool_name,
-                                        input,
-                                        Some(tool_result),
-                                        OutputFormat::Markdown,
-                                        &context,
-                                    );
+                    // Handle tool calls nested in assistant messages
+                    if let Some(content_array) = message.get("content").and_then(|c| c.as_array()) {
+                        for content_item in content_array {
+                            if let Some(item_type) =
+                                content_item.get("type").and_then(|t| t.as_str())
+                            {
+                                if item_type == "tool_use" {
+                                    if let (Some(tool_name), Some(tool_id), Some(input)) = (
+                                        content_item.get("name").and_then(|n| n.as_str()),
+                                        content_item.get("id").and_then(|i| i.as_str()),
+                                        content_item.get("input"),
+                                    ) {
+                                        let context = RenderContext {
+                                            tool_name: tool_name.to_string(),
+                                            tool_id: Some(tool_id.to_string()),
+                                            timestamp: entry
+                                                .timestamp
+                                                .map(|ts| ts.format("%H:%M:%S").to_string()),
+                                            session_id: session_id.to_string(),
+                                            project_name: project_name.to_string(),
+                                        };
 
-                                    if let Some(output) = rendered.output {
-                                        markdown.push_str(&output);
+                                        let rendered = renderer.render_tool(
+                                            tool_name,
+                                            input,
+                                            None,
+                                            OutputFormat::Markdown,
+                                            &context,
+                                        );
+
+                                        markdown.push_str(&rendered.header);
+                                        markdown.push_str(&rendered.input);
+
+                                        // Store for matching with results later
+                                        pending_tool_uses.insert(
+                                            tool_id.to_string(),
+                                            (tool_name.to_string(), input.clone(), context),
+                                        );
                                     }
                                 }
                             }
                         }
                     }
                 }
-                current_tool_use = None;
             }
             _ => {
-                // Handle other entry types if needed
+                // Handle tool results from standalone entries
+                if let Some(tool_result) = &entry.tool_use_result {
+                    // Try to find matching tool use
+                    if let Some(tool_use_id) =
+                        tool_result.get("tool_use_id").and_then(|id| id.as_str())
+                    {
+                        if let Some((tool_name, input, context)) =
+                            pending_tool_uses.remove(tool_use_id)
+                        {
+                            let rendered = renderer.render_tool(
+                                &tool_name,
+                                &input,
+                                Some(tool_result),
+                                OutputFormat::Markdown,
+                                &context,
+                            );
+
+                            if let Some(output) = rendered.output {
+                                markdown.push_str(&output);
+                            }
+                        }
+                    }
+                }
             }
         }
 

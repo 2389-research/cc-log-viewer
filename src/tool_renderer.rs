@@ -206,19 +206,7 @@ impl ToolHandler for BashHandler {
         format: OutputFormat,
         _context: &RenderContext,
     ) -> String {
-        if let Some(content) = output.get("content").and_then(|c| c.as_str()) {
-            let header = match format {
-                OutputFormat::Markdown => "**Output:**\n",
-                OutputFormat::Html => "<h4>Output:</h4>",
-            };
-            format!(
-                "{}{}",
-                header,
-                format_utils::code_block(content, None, format)
-            )
-        } else {
-            String::new()
-        }
+        format_utils::render_data_tool_output(output, "Output", format)
     }
 }
 
@@ -271,19 +259,7 @@ impl ToolHandler for ReadHandler {
         format: OutputFormat,
         _context: &RenderContext,
     ) -> String {
-        if let Some(content) = output.get("content").and_then(|c| c.as_str()) {
-            let header = match format {
-                OutputFormat::Markdown => "**Content:**\n",
-                OutputFormat::Html => "<h4>Content:</h4>",
-            };
-            format!(
-                "{}{}",
-                header,
-                format_utils::code_block(content, None, format)
-            )
-        } else {
-            String::new()
-        }
+        format_utils::render_data_tool_output(output, "Content", format)
     }
 }
 
@@ -590,19 +566,7 @@ impl ToolHandler for LSHandler {
         format: OutputFormat,
         _context: &RenderContext,
     ) -> String {
-        if let Some(content) = output.get("content").and_then(|c| c.as_str()) {
-            let header = match format {
-                OutputFormat::Markdown => "**Directory listing:**\n",
-                OutputFormat::Html => "<h4>Directory listing:</h4>",
-            };
-            format!(
-                "{}{}",
-                header,
-                format_utils::code_block(content, None, format)
-            )
-        } else {
-            String::new()
-        }
+        format_utils::render_data_tool_output(output, "Directory listing", format)
     }
 }
 
@@ -646,19 +610,7 @@ impl ToolHandler for GrepHandler {
         format: OutputFormat,
         _context: &RenderContext,
     ) -> String {
-        if let Some(content) = output.get("content").and_then(|c| c.as_str()) {
-            let header = match format {
-                OutputFormat::Markdown => "**Matches:**\n",
-                OutputFormat::Html => "<h4>Matches:</h4>",
-            };
-            format!(
-                "{}{}",
-                header,
-                format_utils::code_block(content, None, format)
-            )
-        } else {
-            String::new()
-        }
+        format_utils::render_data_tool_output(output, "Matches", format)
     }
 }
 
@@ -698,19 +650,7 @@ impl ToolHandler for GlobHandler {
         format: OutputFormat,
         _context: &RenderContext,
     ) -> String {
-        if let Some(content) = output.get("content").and_then(|c| c.as_str()) {
-            let header = match format {
-                OutputFormat::Markdown => "**Found files:**\n",
-                OutputFormat::Html => "<h4>Found files:</h4>",
-            };
-            format!(
-                "{}{}",
-                header,
-                format_utils::code_block(content, None, format)
-            )
-        } else {
-            String::new()
-        }
+        format_utils::render_data_tool_output(output, "Found files", format)
     }
 }
 
@@ -747,14 +687,32 @@ impl ToolHandler for WebFetchHandler {
         format: OutputFormat,
         _context: &RenderContext,
     ) -> String {
+        let header = match format {
+            OutputFormat::Markdown => "**Fetched content:**\n",
+            OutputFormat::Html => "<h4>Fetched content:</h4>",
+        };
+
         if let Some(content) = output.get("content").and_then(|c| c.as_str()) {
-            let header = match format {
-                OutputFormat::Markdown => "**Fetched content:**\n",
-                OutputFormat::Html => "<h4>Fetched content:</h4>",
-            };
-            format!("{}{}", header, format_utils::blockquote(content, format))
+            if !content.trim().is_empty() {
+                format!("{}{}", header, format_utils::blockquote(content, format))
+            } else {
+                format!(
+                    "{}{}\n\n",
+                    header,
+                    format_utils::italic("(empty content)", format)
+                )
+            }
         } else {
-            String::new()
+            // Show the raw output structure if content is missing
+            format!(
+                "{}{}",
+                header,
+                format_utils::code_block(
+                    &serde_json::to_string_pretty(output).unwrap_or_default(),
+                    Some("json"),
+                    format
+                )
+            )
         }
     }
 }
@@ -802,14 +760,32 @@ impl ToolHandler for WebSearchHandler {
         format: OutputFormat,
         _context: &RenderContext,
     ) -> String {
+        let header = match format {
+            OutputFormat::Markdown => "**Search results:**\n",
+            OutputFormat::Html => "<h4>Search results:</h4>",
+        };
+
         if let Some(content) = output.get("content").and_then(|c| c.as_str()) {
-            let header = match format {
-                OutputFormat::Markdown => "**Search results:**\n",
-                OutputFormat::Html => "<h4>Search results:</h4>",
-            };
-            format!("{}{}", header, format_utils::blockquote(content, format))
+            if !content.trim().is_empty() {
+                format!("{}{}", header, format_utils::blockquote(content, format))
+            } else {
+                format!(
+                    "{}{}\n\n",
+                    header,
+                    format_utils::italic("(empty results)", format)
+                )
+            }
         } else {
-            String::new()
+            // Show the raw output structure if content is missing
+            format!(
+                "{}{}",
+                header,
+                format_utils::code_block(
+                    &serde_json::to_string_pretty(output).unwrap_or_default(),
+                    Some("json"),
+                    format
+                )
+            )
         }
     }
 }
@@ -854,14 +830,32 @@ impl ToolHandler for TaskHandler {
         format: OutputFormat,
         _context: &RenderContext,
     ) -> String {
+        let header = match format {
+            OutputFormat::Markdown => "**Task completion:**\n",
+            OutputFormat::Html => "<h4>Task completion:</h4>",
+        };
+
         if let Some(content) = output.get("content").and_then(|c| c.as_str()) {
-            let header = match format {
-                OutputFormat::Markdown => "**Task completion:**\n",
-                OutputFormat::Html => "<h4>Task completion:</h4>",
-            };
-            format!("{}{}", header, format_utils::blockquote(content, format))
+            if !content.trim().is_empty() {
+                format!("{}{}", header, format_utils::blockquote(content, format))
+            } else {
+                format!(
+                    "{}{}\n\n",
+                    header,
+                    format_utils::italic("(task completed with no output)", format)
+                )
+            }
         } else {
-            String::new()
+            // Show the raw output structure if content is missing
+            format!(
+                "{}{}",
+                header,
+                format_utils::code_block(
+                    &serde_json::to_string_pretty(output).unwrap_or_default(),
+                    Some("json"),
+                    format
+                )
+            )
         }
     }
 }
@@ -899,18 +893,36 @@ impl ToolHandler for NotebookReadHandler {
         format: OutputFormat,
         _context: &RenderContext,
     ) -> String {
+        let header = match format {
+            OutputFormat::Markdown => "**Notebook content:**\n",
+            OutputFormat::Html => "<h4>Notebook content:</h4>",
+        };
+
         if let Some(content) = output.get("content").and_then(|c| c.as_str()) {
-            let header = match format {
-                OutputFormat::Markdown => "**Notebook content:**\n",
-                OutputFormat::Html => "<h4>Notebook content:</h4>",
-            };
+            if !content.trim().is_empty() {
+                format!(
+                    "{}{}",
+                    header,
+                    format_utils::code_block(content, Some("json"), format)
+                )
+            } else {
+                format!(
+                    "{}{}\n\n",
+                    header,
+                    format_utils::italic("(empty notebook content)", format)
+                )
+            }
+        } else {
+            // Show the raw output structure if content is missing
             format!(
                 "{}{}",
                 header,
-                format_utils::code_block(content, Some("json"), format)
+                format_utils::code_block(
+                    &serde_json::to_string_pretty(output).unwrap_or_default(),
+                    Some("json"),
+                    format
+                )
             )
-        } else {
-            String::new()
         }
     }
 }
@@ -1278,6 +1290,38 @@ impl ToolHandler for PlaywrightHandler {
 // Utility functions for common formatting patterns
 pub mod format_utils {
     use super::OutputFormat;
+    use serde_json::Value;
+
+    /// Standard output rendering for data tools that should always show content
+    pub fn render_data_tool_output(
+        output: &Value,
+        header_text: &str,
+        format: OutputFormat,
+    ) -> String {
+        let header = match format {
+            OutputFormat::Markdown => format!("**{}:**\n", header_text),
+            OutputFormat::Html => format!("<h4>{}:</h4>", header_text),
+        };
+
+        if let Some(content) = output.get("content").and_then(|c| c.as_str()) {
+            if !content.trim().is_empty() {
+                format!("{}{}", header, code_block(content, None, format))
+            } else {
+                format!("{}{}\n\n", header, italic("(empty output)", format))
+            }
+        } else {
+            // Show the raw output structure if content is missing
+            format!(
+                "{}{}",
+                header,
+                code_block(
+                    &serde_json::to_string_pretty(output).unwrap_or_default(),
+                    Some("json"),
+                    format
+                )
+            )
+        }
+    }
 
     pub fn code_block(content: &str, language: Option<&str>, format: OutputFormat) -> String {
         match format {
@@ -1395,15 +1439,7 @@ impl ToolHandler for DefaultHandler {
         format: OutputFormat,
         _context: &RenderContext,
     ) -> String {
-        if let Some(content) = output.get("content").and_then(|c| c.as_str()) {
-            format_utils::code_block(content, None, format)
-        } else {
-            format_utils::code_block(
-                &serde_json::to_string_pretty(output).unwrap_or_default(),
-                Some("json"),
-                format,
-            )
-        }
+        format_utils::render_data_tool_output(output, "Output", format)
     }
 
     fn get_metadata(&self, _input: &Value, _output: Option<&Value>) -> HashMap<String, String> {
