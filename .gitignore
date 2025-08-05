@@ -28,3 +28,4 @@ cobertura.xml
 .DS_Store
 Thumbs.db
 exports/
+claude-code-exports/

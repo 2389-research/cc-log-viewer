@@ -55,6 +55,12 @@ struct Cli {
         requires = "export"
     )]
     export_dir: Option<PathBuf>,
+
+    #[clap(
+        long,
+        help = "Incrementally update exports in claude-code-exports directory (only export changed files)"
+    )]
+    update_export: bool,
 }
 
 #[tokio::main]
@@ -80,6 +86,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let state = AppState::new(projects_dir.clone())
         .map_err(|e| format!("Failed to initialize watch manager: {}", e))?;
+
+    // Handle update export mode
+    if cli.update_export {
+        let export_dir = PathBuf::from("./claude-code-exports");
+        update_export_mode(&projects_dir, &export_dir).await?;
+        return Ok(());
+    }
 
     // Handle export mode
     if cli.export {
@@ -146,6 +159,116 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+fn clean_project_name_for_export(project_name: &str) -> String {
+    let mut cleaned_name = project_name.to_string();
+
+    // Remove leading dash to avoid command-line flag conflicts
+    if cleaned_name.starts_with('-') {
+        cleaned_name = cleaned_name.trim_start_matches('-').to_string();
+    }
+
+    // Ensure we still have a valid name
+    if cleaned_name.is_empty() {
+        cleaned_name = "root".to_string();
+    }
+
+    cleaned_name
+}
+
+async fn update_export_mode(
+    projects_dir: &Path,
+    export_dir: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    println!("🔄 Updating exports in claude-code-exports directory for current project...");
+
+    // Get current working directory to determine the project name
+    let current_dir = std::env::current_dir()?;
+    let claude_project_name = current_dir.display().to_string().replace('/', "-");
+
+    // Create a clean export directory name (remove leading dash)
+    let export_project_name = clean_project_name_for_export(&claude_project_name);
+
+    println!("📂 Current project: {}", export_project_name);
+
+    // Look for the matching project in the Claude Code projects directory (using original name)
+    let project_dir = projects_dir.join(&claude_project_name);
+
+    if !project_dir.exists() {
+        println!("⚠️  No Claude Code sessions found for current project");
+        println!("   Expected: {}", project_dir.display());
+        println!("   Tip: Make sure you've used Claude Code in this directory");
+        return Ok(());
+    }
+
+    // Create export directory if it doesn't exist
+    if !export_dir.exists() {
+        fs::create_dir_all(export_dir)?;
+        println!("📁 Created export directory: {}", export_dir.display());
+    }
+
+    let project_export_dir = export_dir.join(&export_project_name);
+
+    // Create project-specific export directory if needed
+    if !project_export_dir.exists() {
+        fs::create_dir_all(&project_export_dir)?;
+    }
+
+    let sessions = discover_sessions(&project_dir)?;
+    let mut updated_count = 0;
+    let mut skipped_count = 0;
+
+    println!("📄 Found {} session(s) for this project", sessions.len());
+
+    for session_id in sessions {
+        let session_file = project_dir.join(format!("{}.jsonl", session_id));
+        let export_file = project_export_dir.join(format!("{}.md", session_id));
+
+        // Check if we need to update this export
+        let should_export = if export_file.exists() {
+            // Compare modification times
+            let session_metadata = fs::metadata(&session_file)?;
+            let export_metadata = fs::metadata(&export_file)?;
+
+            let session_modified = session_metadata.modified()?;
+            let export_modified = export_metadata.modified()?;
+
+            session_modified > export_modified
+        } else {
+            // Export doesn't exist, so we need to create it
+            true
+        };
+
+        if should_export {
+            // Read and parse the session file
+            let content = fs::read_to_string(&session_file)?;
+            let entries = parse_log_entries(&content);
+
+            // Generate markdown using the same function as the web export
+            let markdown = cc_log_viewer::generate_markdown_export(
+                &entries,
+                &session_id,
+                &export_project_name,
+            );
+
+            // Write the markdown file
+            fs::write(&export_file, markdown)?;
+
+            println!("    ✅ Updated {}.md", session_id);
+            updated_count += 1;
+        } else {
+            println!("    ⏭️  Skipped {}.md (no changes)", session_id);
+            skipped_count += 1;
+        }
+    }
+
+    println!("\n📊 Export Summary:");
+    println!("   Updated: {} files", updated_count);
+    println!("   Skipped: {} files", skipped_count);
+    println!("✅ Update export completed successfully!");
+
+    Ok(())
+}
+
 async fn export_all_projects(
     projects_dir: &Path,
     export_dir: &Path,
@@ -190,7 +313,8 @@ async fn export_project(
     project_name: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let project_dir = projects_dir.join(project_name);
-    let project_export_dir = export_dir.join(project_name);
+    let clean_project_name = clean_project_name_for_export(project_name);
+    let project_export_dir = export_dir.join(&clean_project_name);
 
     // Create project-specific export directory
     if !project_export_dir.exists() {
@@ -211,7 +335,8 @@ async fn export_project(
         let entries = parse_log_entries(&content);
 
         // Generate markdown using the same function as the web export
-        let markdown = cc_log_viewer::generate_markdown_export(&entries, &session_id, project_name);
+        let markdown =
+            cc_log_viewer::generate_markdown_export(&entries, &session_id, &clean_project_name);
 
         // Write the markdown file
         fs::write(&export_file, markdown)?;
